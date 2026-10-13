@@ -1,0 +1,9 @@
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B"]  # style, imports, naming, bugbear
+
+[tool.mypy]
+strict = true
