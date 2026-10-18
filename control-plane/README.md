@@ -1,6 +1,6 @@
 # Spulti-cloud Control Plane
 
-Hệ thống Control Plane xử lý tác vụ bất đồng bộ (Asynchronous Task Queue) sử dụng **FastAPI**, **Celery**, **Redis** và **Nginx Reverse Proxy**, được đóng gói và điều phối hoàn toàn bằng **Docker Compose**.
+Hệ thống Control Plane xử lý tác vụ bất đồng bộ (Asynchronous Task Queue) sử dụng **FastAPI**, **Celery**, **Redis**, **Nginx Reverse Proxy** và cơ sở dữ liệu **AWS RDS PostgreSQL**, được đóng gói và điều phối hoàn toàn bằng **Docker Compose**.
 
 ---
 
@@ -24,10 +24,14 @@ Hệ thống bao gồm 4 dịch vụ container hoạt động trong mạng nội
 ├── app/
 │   ├── __init__.py
 │   ├── celery_app.py      # Cấu hình kết nối Celery với Redis Broker (DB 0) & Backend (DB 1)
+│   ├── database.py        # Kết nối SQLAlchemy tới RDS PostgreSQL qua biến DATABASE_URL
+│   ├── models.py          # Các bảng users, ssh_keys, api_keys
+│   ├── init_db.py         # Script tạo bảng: python -m app.init_db
 │   ├── main.py            # Các HTTP endpoint của FastAPI (/health, /api/tasks/...)
 │   └── tasks.py           # Định nghĩa các Celery background task (spulti.demo_add)
 ├── nginx/
 │   └── default.conf       # Cấu hình Nginx Reverse Proxy lắng nghe cổng 80 -> api:8000
+├── .env.example          # Mẫu file .env chứa DATABASE_URL
 ├── .dockerignore          # Loại trừ .git, .venv, .env, __pycache__, *.pyc, *.pem khi build
 ├── Dockerfile             # Công thức đóng gói image Python 3.12 cho api và worker
 ├── compose.yaml           # Điều phối 4 dịch vụ: redis, api, worker, nginx
@@ -46,6 +50,23 @@ Hệ thống bao gồm 4 dịch vụ container hoạt động trong mạng nội
    * Mở cổng **22 (SSH)**: Cho phép IP của bạn kết nối quản trị từ xa.
    * Mở cổng **80 (HTTP)**: Cho phép lưu lượng truy cập vào `nginx` (`0.0.0.0/0` hoặc dải IP nội bộ).
    * *Lưu ý*: **Không** cần mở cổng `8000` (FastAPI) hay `6379` (Redis) trên Security Group vì các cổng này chỉ giao tiếp trong mạng nội bộ Docker.
+3. **Khởi tạo RDS PostgreSQL** (RDS → Create database):
+   * Engine: **PostgreSQL 16** trở lên, template **Free tier** hoặc **Dev/Test**, instance `db.t3.micro` / `db.t4g.micro`.
+   * DB instance identifier: `spulti-db`, master username: `spulti_admin`, đặt mật khẩu mạnh.
+   * *Additional configuration* → **Initial database name**: `spulti` (nếu bỏ trống, RDS sẽ không tạo database này).
+   * Đặt cùng VPC với EC2, **Public access: No**.
+   * Security Group của RDS: chỉ mở cổng **5432** với nguồn là **Security Group của EC2** (không mở `0.0.0.0/0`).
+   * Sau khi tạo xong, lấy **Endpoint** trong tab *Connectivity & security* (dạng `spulti-db.xxxx.<region>.rds.amazonaws.com`).
+
+### Cấu trúc database
+
+| Bảng | Nội dung chính |
+|------|----------------|
+| `users` | `id` (UUID), `email` và `username` (unique), `password_hash`, `is_active`, `created_at`, `updated_at` |
+| `ssh_keys` | `user_id` → `users.id`, `name`, `public_key`, `fingerprint`; mỗi user không trùng `name` hay `fingerprint` |
+| `api_keys` | `user_id` → `users.id`, `name`, `key_prefix`, `key_hash` (SHA-256, unique), `last_used_at`, `expires_at`, `revoked_at` |
+
+Xóa một user sẽ xóa luôn SSH key và API key của user đó (`ON DELETE CASCADE`). API key gốc không được lưu, chỉ lưu hash và vài ký tự đầu để hiển thị.
 
 ---
 
@@ -94,7 +115,24 @@ git clone https://github.com/Sonvt2006/spulti-cloud.git spulti-cloud
 cd spulti-cloud/control-plane
 ```
 
-### Bước 4: Khởi chạy hệ thống bằng Docker Compose
+### Bước 4: Cấu hình kết nối RDS
+Tạo file `.env` từ mẫu rồi thay `<password>` và `<rds-endpoint>` bằng thông tin RDS ở mục 3:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+`sslmode=require` bắt buộc kết nối tới RDS phải được mã hóa. Nếu mật khẩu có ký tự đặc biệt (`@`, `:`, `/`, `#`, ...), cần URL-encode trước khi đặt vào `DATABASE_URL`. `docker compose` sẽ báo lỗi và dừng nếu chưa đặt biến này.
+
+Tạo các bảng trong database (chỉ cần chạy lần đầu, chạy lại cũng không sao vì chỉ tạo bảng còn thiếu):
+
+```bash
+docker compose build
+docker compose run --rm --no-deps api python -m app.init_db
+```
+
+### Bước 5: Khởi chạy hệ thống bằng Docker Compose
 Build image `spulti-control-plane:dev` và khởi chạy toàn bộ 4 dịch vụ ở chế độ chạy ngầm (`-d`):
 
 ```bash
