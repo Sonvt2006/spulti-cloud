@@ -7,7 +7,6 @@ The project uses two config files for code quality:
 - `pyproject.toml` configures [Ruff](https://docs.astral.sh/ruff/) (linting and import sorting) and [mypy](https://mypy.readthedocs.io/) (strict type checking).
 - `.pre-commit-config.yaml` configures [pre-commit](https://pre-commit.com/), which runs those checks automatically before every commit.
 
-Python 3.11 or newer is required.
 
 ### 1. Create a virtual environment
 
@@ -32,17 +31,6 @@ This reads `.pre-commit-config.yaml` and installs a git hook, so the checks run 
 
 ```bash
 pre-commit run --all-files
-```
-
-### 4. Run the checks manually
-
-Ruff and mypy pick up their settings from `pyproject.toml` automatically:
-
-```bash
-ruff check .          # lint
-ruff check --fix .    # lint and auto-fix what it can
-ruff format .         # format code
-mypy .                # type check
 ```
 
 ## Before opening a pull request

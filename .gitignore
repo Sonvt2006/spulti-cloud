@@ -1,6 +1,20 @@
+# Virtual environments
 .venv/
-.vscode/
+venv/
 
+# Editors
+.vscode/
+.idea/
+.DS_Store
+
+# Python caches
 .ruff_cache/
 .mypy_cache/
 __pycache__/
+*.pyc
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
