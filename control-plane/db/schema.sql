@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Sz16f0HSK1Kf4AGnnO0mOuc9oAXCHVfFGes78afrayhggwhWoCOxfwRZbT5yLsO
+\restrict Tc9beUfyblNdt8XvXhzlfMBnNv2e8dnINPglYSkITslda0idj6lhG7jcPYgI3Jr
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -177,6 +177,9 @@ CREATE TABLE public.machines (
     optimization_mode character varying(20) NOT NULL,
     status character varying(20) DEFAULT 'PENDING'::character varying NOT NULL,
     created_at timestamp with time zone DEFAULT now(),
+    requested_gpu_count integer DEFAULT 0 NOT NULL,
+    requested_gpu_type character varying(100),
+    CONSTRAINT machines_gpu_count_check CHECK ((requested_gpu_count >= 0)),
     CONSTRAINT machines_optimization_mode_check CHECK (((optimization_mode)::text = ANY ((ARRAY['SAVING'::character varying, 'STABLE'::character varying, 'BALANCED'::character varying])::text[]))),
     CONSTRAINT machines_status_check CHECK (((status)::text = ANY ((ARRAY['PENDING'::character varying, 'PROVISIONING'::character varying, 'RUNNING'::character varying])::text[])))
 );
@@ -478,5 +481,5 @@ ALTER TABLE ONLY public.spot_prices
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Sz16f0HSK1Kf4AGnnO0mOuc9oAXCHVfFGes78afrayhggwhWoCOxfwRZbT5yLsO
+\unrestrict Tc9beUfyblNdt8XvXhzlfMBnNv2e8dnINPglYSkITslda0idj6lhG7jcPYgI3Jr
 
