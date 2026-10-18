@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ldmK2HOcMssUO0YaHmx6d5HO9niLp8uGdMEQLdKSqVhTOLBFoLoPdbGhf8BAfTj
+\restrict 3gqPQu13PiintxFUk6m3rrjZwmnIy6jxPeU7vRQGuLmvbZdmCYOcOtcz2YMHeCm
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -38,7 +38,7 @@ INSERT INTO public.users (id, name, email, username, password_hash, created_at) 
 -- Data for Name: machines; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-INSERT INTO public.machines (id, user_id, name, requested_vcpu, requested_ram_gib, optimization_mode, status, created_at) VALUES (1, 3, 'training-01', 2, 4.00, 'BALANCED', 'RUNNING', '2026-10-18 17:01:18.423342+07');
+INSERT INTO public.machines (id, user_id, name, requested_vcpu, requested_ram_gib, optimization_mode, status, created_at, requested_gpu_count, requested_gpu_type) VALUES (1, 3, 'training-01', 2, 4.00, 'BALANCED', 'RUNNING', '2026-10-18 17:01:18.423342+07', 0, NULL);
 
 
 --
@@ -122,5 +122,5 @@ SELECT pg_catalog.setval('public.users_id_seq', 4, true);
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ldmK2HOcMssUO0YaHmx6d5HO9niLp8uGdMEQLdKSqVhTOLBFoLoPdbGhf8BAfTj
+\unrestrict 3gqPQu13PiintxFUk6m3rrjZwmnIy6jxPeU7vRQGuLmvbZdmCYOcOtcz2YMHeCm
 
