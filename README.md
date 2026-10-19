@@ -1,7 +1,6 @@
 # Spulti-cloud
-This project was developed as a part of Cloud Computing course in University of Engineering and Technology.
-
-Spulti-cloud is a multi-cloud spot instance rental platform for AWS and Google Cloud.
-Spot machines cost less than on-demand ones, but the provider can take them back at any time with very little warning. Prices and how often machines get reclaimed also differ by provider, region and time. Spulti-cloud does the price comparison, monitoring and recovery for you, so you can train machine learning models on cheap spot capacity without losing your progress.
+Dự án này là một phần của học phần Điện toán đám mây tại Trường Đại học Công nghệ.
 
 
+Spulti-cloud là nền tảng thuê máy spot đa đám mây cho AWS và Google Cloud.
+Máy spot có giá rẻ hơn máy on-demand, nhưng nhà cung cấp có thể thu hồi chúng bất cứ lúc nào mà gần như không báo trước. Giá cả và tần suất thu hồi máy cũng khác nhau tùy theo nhà cung cấp, khu vực và thời điểm. Spulti-cloud sẽ thay bạn so sánh giá, giám sát và khôi phục, giúp bạn huấn luyện các mô hình học máy trên tài nguyên spot giá rẻ mà không bị mất tiến trình.
