@@ -25,10 +25,12 @@ Hệ thống bao gồm 4 dịch vụ container hoạt động trong mạng nội
 │   ├── __init__.py
 │   ├── celery_app.py      # Cấu hình kết nối Celery với Redis Broker (DB 0) & Backend (DB 1)
 │   ├── database.py        # Kết nối SQLAlchemy tới RDS PostgreSQL qua biến DATABASE_URL
-│   ├── models.py          # Các bảng users, ssh_keys, api_keys
+│   ├── models.py          # Nơi duy nhất định nghĩa các bảng của database
 │   ├── init_db.py         # Script tạo bảng: python -m app.init_db
 │   ├── main.py            # Các HTTP endpoint của FastAPI (/health, /api/tasks/...)
 │   └── tasks.py           # Định nghĩa các Celery background task (spulti.demo_add)
+├── db/
+│   └── seed.sql           # Dữ liệu mẫu để thử nghiệm
 ├── nginx/
 │   └── default.conf       # Cấu hình Nginx Reverse Proxy lắng nghe cổng 80 -> api:8000
 ├── .env.example          # Mẫu file .env chứa DATABASE_URL
@@ -60,11 +62,19 @@ Hệ thống bao gồm 4 dịch vụ container hoạt động trong mạng nội
 
 ### Cấu trúc database
 
+Tất cả các bảng được định nghĩa trong `app/models.py`. Muốn thêm hay sửa bảng thì sửa ở file này, không tạo file `.sql` riêng. Mọi bảng dùng `id` kiểu số nguyên tự tăng (1, 2, 3, ...).
+
 | Bảng | Nội dung chính |
 |------|----------------|
-| `users` | `id` (UUID), `email` và `username` (unique), `password_hash`, `is_active`, `created_at`, `updated_at` |
+| `users` | `name`, `email` và `username` (unique), `password_hash`, `is_active`, `created_at`, `updated_at` |
 | `ssh_keys` | `user_id` → `users.id`, `name`, `public_key`, `fingerprint`; mỗi user không trùng `name` hay `fingerprint` |
 | `api_keys` | `user_id` → `users.id`, `name`, `key_prefix`, `key_hash` (SHA-256, unique), `last_used_at`, `expires_at`, `revoked_at` |
+| `machine_types` | Catalog loại máy AWS/GCP: `provider`, `name`, `vcpu`, `ram_gib`, `gpu_count` |
+| `machines` | Máy Spulti của người dùng: `user_id` → `users.id`, cấu hình yêu cầu, `optimization_mode` (`SAVING`/`STABLE`/`BALANCED`), `status` (`PENDING`/`PROVISIONING`/`RUNNING`/`RECOVERING`/`DELETED`) |
+| `instances` | Máy thật trên cloud gắn với một máy Spulti: `machine_id`, `machine_type_id`, `provider_instance_id`, `region`, `zone`, `started_at`, `ended_at` |
+| `spot_prices` | Lịch sử giá: `machine_type_id`, `region`, `zone`, `price_type` (`SPOT`/`ON_DEMAND`), `price_per_hour`, `recorded_at` |
+| `events` | Sự kiện thu hồi: `machine_id`, `instance_id`, `event_type` (`RECLAIM`/`INTERRUPT`), `details` (JSON) |
+| `cost_records` | Chi phí mỗi instance: `actual_cost`, `on_demand_cost` |
 
 Xóa một user sẽ xóa luôn SSH key và API key của user đó (`ON DELETE CASCADE`). API key gốc không được lưu, chỉ lưu hash và vài ký tự đầu để hiển thị.
 
@@ -130,6 +140,13 @@ Tạo các bảng trong database (chỉ cần chạy lần đầu, chạy lại 
 ```bash
 docker compose build
 docker compose run --rm --no-deps api python -m app.init_db
+```
+
+Nếu muốn có dữ liệu mẫu để thử nghiệm, nạp `db/seed.sql` (chỉ chạy một lần, chạy lại sẽ báo lỗi trùng dữ liệu):
+
+```bash
+set -a; . ./.env; set +a
+docker run --rm -i postgres:16-alpine psql "${DATABASE_URL/+psycopg/}" -v ON_ERROR_STOP=1 < db/seed.sql
 ```
 
 ### Bước 5: Khởi chạy hệ thống bằng Docker Compose
