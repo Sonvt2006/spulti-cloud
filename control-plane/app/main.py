@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from app.auth import router as auth_router
 from app.celery_app import celery_app
 from app.tasks import demo_add
 from celery.result import AsyncResult
@@ -8,6 +9,7 @@ from kombu.exceptions import OperationalError
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="Spulti-cloud Control Plane")
+app.include_router(auth_router)
 
 
 class DemoTaskRequest(BaseModel):

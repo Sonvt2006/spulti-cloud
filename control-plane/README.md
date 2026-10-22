@@ -28,6 +28,8 @@ Hệ thống bao gồm 4 dịch vụ container hoạt động trong mạng nội
 │   ├── models.py          # Nơi duy nhất định nghĩa các bảng của database
 │   ├── init_db.py         # Script tạo bảng: python -m app.init_db
 │   ├── main.py            # Các HTTP endpoint của FastAPI (/health, /api/tasks/...)
+│   ├── auth.py            # Đăng ký, đăng nhập (/api/auth/...) và dependency get_current_user
+│   ├── security.py        # Băm mật khẩu (argon2) và tạo/kiểm tra JWT
 │   └── tasks.py           # Định nghĩa các Celery background task (spulti.demo_add)
 ├── db/
 │   └── seed.sql           # Dữ liệu mẫu để thử nghiệm
@@ -125,15 +127,15 @@ git clone https://github.com/Sonvt2006/spulti-cloud.git spulti-cloud
 cd spulti-cloud/control-plane
 ```
 
-### Bước 4: Cấu hình kết nối RDS
-Tạo file `.env` từ mẫu rồi thay `<password>` và `<rds-endpoint>` bằng thông tin RDS ở mục 3:
+### Bước 4: Cấu hình kết nối RDS và khóa JWT
+Tạo file `.env` từ mẫu rồi thay `<password>` và `<rds-endpoint>` bằng thông tin RDS ở mục 3, và đặt `JWT_SECRET` bằng một chuỗi ngẫu nhiên dài ít nhất 32 ký tự (tạo bằng `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`):
 
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-`sslmode=require` bắt buộc kết nối tới RDS phải được mã hóa. Nếu mật khẩu có ký tự đặc biệt (`@`, `:`, `/`, `#`, ...), cần URL-encode trước khi đặt vào `DATABASE_URL`. `docker compose` sẽ báo lỗi và dừng nếu chưa đặt biến này.
+`sslmode=require` bắt buộc kết nối tới RDS phải được mã hóa. Nếu mật khẩu có ký tự đặc biệt (`@`, `:`, `/`, `#`, ...), cần URL-encode trước khi đặt vào `DATABASE_URL`. `docker compose` sẽ báo lỗi và dừng nếu chưa đặt `DATABASE_URL` hoặc `JWT_SECRET`. Đổi `JWT_SECRET` sẽ làm mọi token đang dùng mất hiệu lực.
 
 Tạo các bảng trong database (chỉ cần chạy lần đầu, chạy lại cũng không sao vì chỉ tạo bảng còn thiếu):
 
@@ -223,6 +225,36 @@ curl http://<EC2_PUBLIC_IP>/api/tasks/<TASK_ID>
     }
   }
   ```
+
+### 4. Đăng ký, đăng nhập và gọi API bằng token
+
+Đăng ký tài khoản (`email` và `username` được chuyển về chữ thường; mật khẩu từ 8 đến 128 ký tự):
+```bash
+curl -X POST http://<EC2_PUBLIC_IP>/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Vu Tri Son", "email": "son@example.com", "username": "sonvt", "password": "matkhau123"}'
+```
+**Kết quả mong đợi (`201 Created`)**; trùng email hoặc username trả `409`:
+```json
+{"id": 1, "name": "Vu Tri Son", "email": "son@example.com", "username": "sonvt"}
+```
+
+Đăng nhập bằng username hoặc email để nhận JWT (hết hạn sau `JWT_EXPIRE_MINUTES` phút, mặc định 60):
+```bash
+curl -X POST http://<EC2_PUBLIC_IP>/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "sonvt", "password": "matkhau123"}'
+```
+**Kết quả mong đợi (`200 OK`)**; sai thông tin trả `401`:
+```json
+{"access_token": "eyJhbGciOi...", "token_type": "bearer", "expires_in": 3600}
+```
+
+Gửi token trong header `Authorization` để gọi các endpoint cần đăng nhập:
+```bash
+curl http://<EC2_PUBLIC_IP>/api/auth/me -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+Thiếu token, token sai, hết hạn hoặc tài khoản bị khóa (`is_active = false`) đều trả `401`.
 
 ---
 
