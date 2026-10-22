@@ -183,50 +183,7 @@ curl -i http://<EC2_PUBLIC_IP>/health
 {"status":"ok","service":"spulti-api"}
 ```
 
-### 2. Gửi một tác vụ tính toán bất đồng bộ vào hàng đợi
-Gửi request `POST /api/tasks/demo` với hai số nguyên `a` và `b` (nằm trong khoảng `-1,000,000` đến `1,000,000`):
-```bash
-curl -X POST http://<EC2_PUBLIC_IP>/api/tasks/demo \
-  -H "Content-Type: application/json" \
-  -d '{"a": 15, "b": 27}'
-```
-**Kết quả mong đợi (`202 Accepted`)**:
-```json
-{
-  "task_id": "c7a6b8e0-1234-4567-89ab-cdef01234567",
-  "status": "QUEUED",
-  "status_url": "/api/tasks/c7a6b8e0-1234-4567-89ab-cdef01234567"
-}
-```
-
-### 3. Truy vấn trạng thái và kết quả của tác vụ
-Sử dụng `task_id` (hoặc `status_url`) nhận được ở bước trên để kiểm tra tiến độ xử lý của Celery Worker (task `spulti.demo_add` được giả lập độ trễ `5 giây`):
-
-```bash
-curl http://<EC2_PUBLIC_IP>/api/tasks/<TASK_ID>
-```
-
-* **Khi task đang được thực thi**:
-  ```json
-  {
-    "task_id": "c7a6b8e0-1234-4567-89ab-cdef01234567",
-    "status": "STARTED"
-  }
-  ```
-* **Sau 5 giây khi task hoàn tất (`SUCCESS`)**:
-  ```json
-  {
-    "task_id": "c7a6b8e0-1234-4567-89ab-cdef01234567",
-    "status": "SUCCESS",
-    "result": {
-      "operation": "demo_add",
-      "result": 42,
-      "executed_by": "celery-worker"
-    }
-  }
-  ```
-
-### 4. Đăng ký, đăng nhập và gọi API bằng token
+### 2. Đăng ký, đăng nhập và gọi API bằng token
 
 Đăng ký tài khoản (`email` và `username` được chuyển về chữ thường; mật khẩu từ 8 đến 128 ký tự):
 ```bash
@@ -257,6 +214,50 @@ curl http://<EC2_PUBLIC_IP>/api/auth/me -H "Authorization: Bearer <ACCESS_TOKEN>
 Thiếu token, token sai, hết hạn hoặc tài khoản bị khóa (`is_active = false`) đều trả `401`.
 
 ---
+
+### 3. Gửi một tác vụ tính toán bất đồng bộ vào hàng đợi (phải đăng nhập có <ACCESS_TOKEN> mới gửi task được)
+Gửi request `POST /api/tasks/demo` với hai số nguyên `a` và `b` (nằm trong khoảng `-1,000,000` đến `1,000,000`):
+```bash
+curl -X POST http://<EC2_PUBLIC_IP>/api/tasks/demo \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+  -d '{"a": 15, "b": 27}'
+```
+**Kết quả mong đợi (`202 Accepted`)**:
+```json
+{
+  "task_id": "c7a6b8e0-1234-4567-89ab-cdef01234567",
+  "status": "QUEUED",
+  "status_url": "/api/tasks/c7a6b8e0-1234-4567-89ab-cdef01234567"
+}
+```
+
+### 4. Truy vấn trạng thái và kết quả của tác vụ
+Sử dụng `task_id` (hoặc `status_url`) nhận được ở bước trên để kiểm tra tiến độ xử lý của Celery Worker (task `spulti.demo_add` được giả lập độ trễ `5 giây`):
+
+```bash
+curl http://<EC2_PUBLIC_IP>/api/tasks/<TASK_ID> -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+* **Khi task đang được thực thi**:
+  ```json
+  {
+    "task_id": "c7a6b8e0-1234-4567-89ab-cdef01234567",
+    "status": "STARTED"
+  }
+  ```
+* **Sau 5 giây khi task hoàn tất (`SUCCESS`)**:
+  ```json
+  {
+    "task_id": "c7a6b8e0-1234-4567-89ab-cdef01234567",
+    "status": "SUCCESS",
+    "result": {
+      "operation": "demo_add",
+      "result": 42,
+      "executed_by": "celery-worker"
+    }
+  }
+  ```
 
 ## 6. Các lệnh vận hành và bảo trì thường dùng
 

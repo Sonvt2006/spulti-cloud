@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from app.auth import CurrentUser
 from app.auth import router as auth_router
 from app.celery_app import celery_app
 from app.tasks import demo_add
@@ -25,7 +26,7 @@ def health():
 
 
 @app.post("/api/tasks/demo", status_code=202)
-def submit_demo_task(payload: DemoTaskRequest):
+def submit_demo_task(payload: DemoTaskRequest, user: CurrentUser):
     try:
         task = demo_add.delay(payload.a, payload.b)
     except OperationalError as exc:
@@ -42,7 +43,7 @@ def submit_demo_task(payload: DemoTaskRequest):
 
 
 @app.get("/api/tasks/{task_id}")
-def get_task_status(task_id: UUID):
+def get_task_status(task_id: UUID, user: CurrentUser):
     task = AsyncResult(str(task_id), app=celery_app)
     state = task.state
 
