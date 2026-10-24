@@ -161,6 +161,9 @@ class Machine(Base):
         Integer, nullable=False, server_default=text("0")
     )
     requested_gpu_type: Mapped[str | None] = mapped_column(String(100))
+    requested_disk_gib: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    requested_region: Mapped[str | None] = mapped_column(String(50))
+    requested_zone: Mapped[str | None] = mapped_column(String(50))
     optimization_mode: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, server_default=text("'PENDING'")
