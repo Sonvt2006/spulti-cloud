@@ -36,7 +36,7 @@ def new_state() -> dict:
         machine_id=0,  # Test độc lập, không ghi DB.
         name=f"spulti-test-{request_id[:8]}",
         machine_type="t3.small",
-        image_id="ami-091b599f5f318ddd2",  # Ubuntu Server 22.04 LTS
+        image_id="ami-033ea4ff4a9c726dc",  # Ubuntu Server 22.04 LTS
         zone="us-east-1c",
         request_id=request_id,
         disk_size_gb=10,
