@@ -10,6 +10,9 @@ from app.adapters.gcp import GCPAdapter
 
 # Giữ tên này cho toàn bộ vòng create → status → delete.
 INSTANCE_NAME = "spulti-gcp-test-01"
+CREATE_GENERATION = "01"
+USER = "long"
+
 SSH_PUBLIC_KEY_PATH = Path("/app-keys/spulti-gcp-test.pub")
 
 
@@ -52,7 +55,7 @@ def main():
         request_id = str(
             uuid5(
                 NAMESPACE_URL,
-                f"spulti-test/{project}/{zone}/{INSTANCE_NAME}",
+                f"spulti-test/{project}/{zone}/{INSTANCE_NAME}/{USER}/{CREATE_GENERATION}",
             )
         )
 
