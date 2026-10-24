@@ -259,7 +259,46 @@ curl http://<EC2_PUBLIC_IP>/api/tasks/<TASK_ID> -H "Authorization: Bearer <ACCES
   }
   ```
 
-## 6. Các lệnh vận hành và bảo trì thường dùng
+## 6. Tạo/Xem/Xóa spot instance thông qua AWS và GCP adapter
+
+Git pull code mới nhất về và chạy docker build để có môi trường mới nhất. (CHẠY TRÊN MÁY EC2)
+
+### 1. Kiểm tra thư viện trong worker
+```bash
+docker compose exec worker python -c \
+"import boto3; from google.cloud import compute_v1; print('AWS/GCP SDK OK')"
+```
+
+### 2. Kiểm tra danh tính AWS
+```bash
+docker compose exec worker python -c \
+"import boto3; r=boto3.client('sts', region_name='us-east-1').get_caller_identity(); print(r['Account']); print(r['Arn'])"
+```
+### 3. Kiểm tra GCP
+```bash
+docker compose exec worker python -c \
+"from google.cloud import compute_v1; c=compute_v1.InstancesClient(); next(iter(c.list(project='spulti-cloud', zone='asia-southeast1-b')), None); print('GCP read OK')"
+```
+### 4. Chạy tạo, xem và xóa Spot instance
+AWS:
+```bash
+docker compose exec worker python -m app.scripts.try_aws_adapter create
+
+docker compose exec worker python -m app.scripts.try_aws_adapter status
+
+docker compose exec worker python -m app.scripts.try_aws_adapter delete
+```
+
+GCP:
+```bash
+docker compose exec worker python -m app.scripts.try_gcp_adapter create
+
+docker compose exec worker python -m app.scripts.try_gcp_adapter status
+
+docker compose exec worker python -m app.scripts.try_gcp_adapter delete
+```
+
+## 7. Các lệnh vận hành và bảo trì thường dùng
 
 * **Xem log toàn bộ hệ thống theo thời gian thực**:
   ```bash
