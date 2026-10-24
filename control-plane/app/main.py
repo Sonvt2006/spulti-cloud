@@ -3,9 +3,9 @@ from uuid import UUID
 
 from app.auth import CurrentUser
 from app.auth import router as auth_router
-from app.catalog import find_machine_types
 from app.celery_app import celery_app
 from app.database import get_db
+from app.services.catalog import find_machine_types
 from app.tasks import demo_add
 from celery.result import AsyncResult
 from fastapi import Depends, FastAPI, HTTPException, Query
