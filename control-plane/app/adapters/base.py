@@ -57,7 +57,3 @@ class CloudAdapter(ABC):
     @abstractmethod
     def get_instance(self, instance_ref: str) -> InstanceInfo:
         raise NotImplementedError("This method should be implemented by subclasses.")
-
-    @abstractmethod
-    def list_instances(self) -> list[InstanceInfo]:
-        raise NotImplementedError("This method should be implemented by subclasses.")
