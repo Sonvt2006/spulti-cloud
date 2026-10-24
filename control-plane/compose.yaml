@@ -1,7 +1,7 @@
 x-app: &app
   image: spulti-control-plane:dev
   build: .
-  environment:
+  environment: &app-env
     CELERY_BROKER_URL: redis://redis:6379/0
     CELERY_RESULT_BACKEND: redis://redis:6379/1
     # Set in .env (see .env.example).
@@ -59,6 +59,30 @@ services:
 
   worker:
     <<: *app
+    environment:
+      <<: *app-env
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-credentials.json
+
+    volumes:
+      - type: bind
+        source: /etc/spulti/secrets/gcp-credentials.json
+        target: /run/secrets/gcp-credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
+
+      - type: bind
+        source: /etc/spulti/ssh/spulti-gcp-test.pub
+        target: /app-keys/spulti-gcp-test.pub
+        read_only: true
+        bind:
+          create_host_path: false
+
+      - type: bind
+        source: /var/lib/spulti-tests
+        target: /var/lib/spulti-tests
+        bind:
+          create_host_path: false
     command:
       - celery
       - -A

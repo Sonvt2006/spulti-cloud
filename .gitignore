@@ -19,3 +19,6 @@ __pycache__/
 !.env.example
 *.pem
 *.dump
+
+.aws-adapter-test.json
+.gcp-adapter-test.json
