@@ -289,7 +289,7 @@ docker compose exec worker python -m app.scripts.try_aws_adapter status
 docker compose exec worker python -m app.scripts.try_aws_adapter delete
 ```
 
-GCP:
+GCP: (chú ý trước khi chạy vào file /control-plane/app/scripts/try_gcp_adapter.py sửa USER theo tên và CREATE_GENERATION theo số lần đã chạy)
 ```bash
 docker compose exec worker python -m app.scripts.try_gcp_adapter create
 
