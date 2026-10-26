@@ -1,0 +1,98 @@
+# Standalone local stack. Do not merge with compose.yaml (the EC2 stack).
+name: spulti-local
+
+x-app: &app
+  image: spulti-control-plane:local
+  build: .
+  environment: &app-env
+    DATABASE_URL: postgresql+psycopg://spulti:spulti_local@postgres:5432/spulti
+    JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env.local}
+    CELERY_BROKER_URL: redis://redis:6379/0
+    CELERY_RESULT_BACKEND: redis://redis:6379/1
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: spulti
+      POSTGRES_USER: spulti
+      POSTGRES_PASSWORD: spulti_local
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spulti -d spulti"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    <<: *app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    <<: *app
+    environment:
+      <<: *app-env
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_EC2_METADATA_DISABLED: "true"
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-credentials.json
+    volumes:
+      - type: bind
+        source: ./.local/gcp-credentials.json
+        target: /run/secrets/gcp-credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.local/spulti-gcp-test.pub
+        target: /app-keys/spulti-gcp-test.pub
+        read_only: true
+        bind:
+          create_host_path: false
+      - test_state:/var/lib/spulti-tests
+    command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    stop_grace_period: 60s
+
+  nginx:
+    image: nginx:stable-alpine
+    ports:
+      - "127.0.0.1:${LOCAL_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  test_state:

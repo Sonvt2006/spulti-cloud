@@ -10,4 +10,6 @@ __pycache__
 __pycache__/
 *.pem
 secrets/
+.local/
+.env.*
 .aws-adapter-test.json

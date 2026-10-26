@@ -101,7 +101,6 @@ class CloudAdapter(ABC):
         raise NotImplementedError
 
     @staticmethod
-    @abstractmethod
     def available_zones(*args, **kwargs) -> list[str]:
         raise NotImplementedError
 

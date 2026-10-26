@@ -1,5 +1,7 @@
 # Spulti-cloud Control Plane
 
+> Chạy trên laptop Windows 11 hoặc Ubuntu: xem [README.local.md](README.local.md). Hướng dẫn bên dưới dành cho EC2/RDS với `compose.yaml`.
+
 Hệ thống Control Plane xử lý tác vụ bất đồng bộ (Asynchronous Task Queue) sử dụng **FastAPI**, **Celery**, **Redis**, **Nginx Reverse Proxy** và cơ sở dữ liệu **AWS RDS PostgreSQL**, được đóng gói và điều phối hoàn toàn bằng **Docker Compose**.
 
 ---

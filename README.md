@@ -1,4 +1,11 @@
 # Spulti-cloud
+
+## Chạy trên máy cá nhân
+
+Xem [hướng dẫn chạy local trên Windows 11 và Ubuntu](control-plane/README.local.md): cài AWS/GCP CLI và Python SDK, cấu hình credentials, chạy API/worker cùng PostgreSQL local và thử các cloud adapter.
+
+Tài liệu khác: [triển khai trên EC2](control-plane/README.md), [Spulti CLI](cli/README.md), [quy trình đóng góp](CONTRIBUTING.md).
+
 ## About
 
 Spulti-cloud là nền tảng thuê máy spot đa đám mây cho AWS và Google Cloud.

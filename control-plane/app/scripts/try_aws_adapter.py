@@ -49,7 +49,7 @@ def new_state() -> dict:
 
     return {
         "region": "us-east-1",
-        "subnet_id": "subnet-0a2c3d52a22d478ad",
+        "subnet_id": "subnet-0ceb087f813c4bf6c",
         "security_group_ids": ["sg-018c6610dc3cbedbe"],
         "key_name": "spulti-key",
         "spec": asdict(spec),
