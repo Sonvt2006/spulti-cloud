@@ -27,13 +27,12 @@ Hệ thống bao gồm 4 dịch vụ container hoạt động trong mạng nội
 │   ├── database.py        # Kết nối SQLAlchemy tới RDS PostgreSQL qua biến DATABASE_URL
 │   ├── models.py          # Nơi duy nhất định nghĩa các bảng của database
 │   ├── init_db.py         # Script tạo bảng: python -m app.init_db
+│   ├── seed.py            # Nạp dữ liệu mẫu để thử nghiệm: python -m app.seed
 │   ├── main.py            # Các HTTP endpoint của FastAPI (/health, /api/tasks/...)
 │   ├── auth.py            # Đăng ký, đăng nhập (/api/auth/...) và dependency get_current_user (JWT hoặc API key)
 │   ├── api_keys.py        # Tạo, liệt kê, thu hồi API key cho CLI (/api/api-keys)
 │   ├── security.py        # Băm mật khẩu (argon2), tạo/kiểm tra JWT, sinh và băm API key
 │   └── tasks.py           # Định nghĩa các Celery background task (spulti.demo_add)
-├── db/
-│   └── seed.sql           # Dữ liệu mẫu để thử nghiệm
 ├── nginx/
 │   └── default.conf       # Cấu hình Nginx Reverse Proxy lắng nghe cổng 80 -> api:8000
 ├── .env.example          # Mẫu file .env chứa DATABASE_URL
@@ -149,11 +148,10 @@ docker compose build
 docker compose run --rm --no-deps api python -m app.init_db
 ```
 
-Nếu muốn có dữ liệu mẫu để thử nghiệm, nạp `db/seed.sql` (chỉ chạy một lần, chạy lại sẽ báo lỗi trùng dữ liệu):
+Nếu muốn có dữ liệu mẫu để thử nghiệm, chạy `app/seed.py` (chạy lại cũng không sao, dữ liệu mẫu đã có thì sẽ bỏ qua):
 
 ```bash
-set -a; . ./.env; set +a
-docker run --rm -i postgres:16-alpine psql "${DATABASE_URL/+psycopg/}" -v ON_ERROR_STOP=1 < db/seed.sql
+docker compose run --rm --no-deps api python -m app.seed
 ```
 
 ### Bước 5: Khởi chạy hệ thống bằng Docker Compose
