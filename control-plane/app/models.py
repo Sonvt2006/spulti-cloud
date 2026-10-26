@@ -251,3 +251,36 @@ class CostRecord(Base):
     calculated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class SpotRisk(Base):
+    """History of AWS interruption buckets and GCP daily preemption rates."""
+
+    __tablename__ = "spot_risks"
+    __table_args__ = (
+        CheckConstraint(
+            "rate_min IS NULL OR (rate_min >= 0 AND rate_min <= 1)",
+            name="spot_risks_min_check",
+        ),
+        CheckConstraint(
+            "rate_max IS NULL OR (rate_max >= 0 AND rate_max <= 1)",
+            name="spot_risks_max_check",
+        ),
+    )
+
+    id: Mapped[int] = _id_pk()
+    machine_type_id: Mapped[int] = mapped_column(
+        ForeignKey("machine_types.id"), nullable=False
+    )
+    region: Mapped[str] = mapped_column(String(50), nullable=False)
+    zone: Mapped[str | None] = mapped_column(String(50))
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    metric: Mapped[str] = mapped_column(String(50), nullable=False)
+    rate_min: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))
+    rate_max: Mapped[Decimal | None] = mapped_column(Numeric(8, 6))
+    label: Mapped[str | None] = mapped_column(String(50))
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

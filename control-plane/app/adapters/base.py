@@ -1,5 +1,11 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.services.catalog import MachineSpec
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,38 @@ class InstanceInfo:
     public_ip: str | None = None
 
 
+@dataclass(frozen=True)
+class SpotPriceQuote:
+    provider: str
+    machine_type: str
+    region: str
+    zone: str | None
+    price_per_hour: Decimal
+    effective_at: datetime
+
+
+@dataclass(frozen=True)
+class SpotRiskEstimate:
+    provider: str
+    machine_type: str
+    region: str
+    zone: str | None
+    source: str
+    metric: str
+    rate_min: Decimal | None
+    rate_max: Decimal | None
+    label: str | None
+    observed_at: datetime
+    period_start: datetime | None = None
+    period_end: datetime | None = None
+
+
+@dataclass(frozen=True)
+class MarketData:
+    prices: list[SpotPriceQuote]
+    risks: list[SpotRiskEstimate]
+
+
 class CloudAdapter(ABC):
     def __init__(self, config):
         self.config = config
@@ -57,3 +95,37 @@ class CloudAdapter(ABC):
     @abstractmethod
     def get_instance(self, instance_ref: str) -> InstanceInfo:
         raise NotImplementedError("This method should be implemented by subclasses.")
+
+    @abstractmethod
+    def available_regions(*args, **kwargs) -> list[str]:
+        raise NotImplementedError
+
+    @staticmethod
+    @abstractmethod
+    def available_zones(*args, **kwargs) -> list[str]:
+        raise NotImplementedError
+
+    @staticmethod
+    @abstractmethod
+    def offered_machine_types(*args, **kwargs) -> list[str]:
+        raise NotImplementedError
+
+    @staticmethod
+    @abstractmethod
+    def describe_machine_specs(*args, **kwargs) -> list["MachineSpec"]:
+        raise NotImplementedError
+
+    @staticmethod
+    @abstractmethod
+    def get_spot_prices(*args, **kwargs) -> list[SpotPriceQuote]:
+        raise NotImplementedError
+
+    @staticmethod
+    @abstractmethod
+    def get_interruption_risks(*args, **kwargs) -> list[SpotRiskEstimate]:
+        raise NotImplementedError
+
+    @staticmethod
+    @abstractmethod
+    def get_market_data(*args, **kwargs) -> MarketData:
+        raise NotImplementedError
