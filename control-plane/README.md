@@ -128,11 +128,15 @@ cd spulti-cloud/control-plane
 ```
 
 ### Bước 4: Cấu hình kết nối RDS và khóa JWT
-Tạo file `.env` từ mẫu rồi thay `<password>` và `<rds-endpoint>` bằng thông tin RDS ở mục 3, và đặt `JWT_SECRET` bằng một chuỗi ngẫu nhiên dài ít nhất 32 ký tự (tạo bằng `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`):
+Tạo file `.env` từ mẫu rồi thay `<password>` và `<rds-endpoint>` bằng thông tin RDS ở mục 3, và đặt `JWT_SECRET` bằng một chuỗi ngẫu nhiên dài ít nhất 32 ký tự 
 
 ```bash
 cp .env.example .env
 nano .env
+```
+Tạo JWT_SECRET bằng:
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
 `sslmode=require` bắt buộc kết nối tới RDS phải được mã hóa. Nếu mật khẩu có ký tự đặc biệt (`@`, `:`, `/`, `#`, ...), cần URL-encode trước khi đặt vào `DATABASE_URL`. `docker compose` sẽ báo lỗi và dừng nếu chưa đặt `DATABASE_URL` hoặc `JWT_SECRET`. Đổi `JWT_SECRET` sẽ làm mọi token đang dùng mất hiệu lực.
@@ -189,18 +193,18 @@ curl -i http://<EC2_PUBLIC_IP>/health
 ```bash
 curl -X POST http://<EC2_PUBLIC_IP>/api/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"name": "Vu Tri Son", "email": "son@example.com", "username": "sonvt", "password": "matkhau123"}'
+  -d '{"name": "Peter Parker", "email": "peter@example.com", "username": "peter", "password": "spiderman"}'
 ```
 **Kết quả mong đợi (`201 Created`)**; trùng email hoặc username trả `409`:
 ```json
-{"id": 1, "name": "Vu Tri Son", "email": "son@example.com", "username": "sonvt"}
+{"id": 1, "name": "Peter Parker", "email": "peter@example.com", "username": "peter"}
 ```
 
 Đăng nhập bằng username hoặc email để nhận JWT (hết hạn sau `JWT_EXPIRE_MINUTES` phút, mặc định 60):
 ```bash
 curl -X POST http://<EC2_PUBLIC_IP>/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username": "sonvt", "password": "matkhau123"}'
+  -d '{"username": "peter", "password": "spiderman"}'
 ```
 **Kết quả mong đợi (`200 OK`)**; sai thông tin trả `401`:
 ```json
