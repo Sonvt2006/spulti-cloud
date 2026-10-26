@@ -1,4 +1,4 @@
-"""Catalog: look up and maintain normalized AWS/GCP machine types."""
+"""Catalog: tra cứu và cập nhật danh sách loại máy AWS/GCP đã chuẩn hóa."""
 
 from dataclasses import dataclass
 from decimal import Decimal
@@ -27,7 +27,7 @@ def find_machine_types(
     limit: int = 100,
     offset: int = 0,
 ) -> list[MachineType]:
-    """Filter CPU/RAM/GPU requirements; does not check price or Spot capacity."""
+    """Lọc theo yêu cầu CPU/RAM/GPU; không kiểm tra giá hay còn máy Spot không."""
     query = select(MachineType)
     if vcpu is not None:
         query = query.where(MachineType.vcpu >= vcpu)
@@ -41,7 +41,7 @@ def find_machine_types(
 
 
 def upsert_machine_types(db: Session, specs: list[MachineSpec]) -> dict[str, int]:
-    """Insert new specs or update existing ones. Caller controls transaction/commit."""
+    """Thêm loại máy mới hoặc cập nhật loại đã có. Nơi gọi tự lo transaction/commit."""
     counts = {"created": 0, "updated": 0}
     for spec in specs:
         provider = spec.provider.upper()

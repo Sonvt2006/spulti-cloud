@@ -4,7 +4,7 @@ x-app: &app
   environment: &app-env
     CELERY_BROKER_URL: redis://redis:6379/0
     CELERY_RESULT_BACKEND: redis://redis:6379/1
-    # Set in .env (see .env.example).
+    # Đặt trong .env (xem .env.example).
     DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
     JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
   restart: unless-stopped

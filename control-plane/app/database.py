@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
-# Points to RDS PostgreSQL, e.g.
+# Địa chỉ RDS PostgreSQL, ví dụ:
 # postgresql+psycopg://<user>:<password>@<endpoint>.rds.amazonaws.com:5432/spulti?sslmode=require
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -13,7 +13,7 @@ DATABASE_URL = os.getenv(
 
 engine = create_engine(
     DATABASE_URL,
-    # Check connections before use, RDS may close idle ones.
+    # Kiểm tra kết nối trước khi dùng, vì RDS có thể ngắt kết nối để lâu không dùng.
     pool_pre_ping=True,
     pool_recycle=1800,
 )
@@ -26,6 +26,6 @@ class Base(DeclarativeBase):
 
 
 def get_db() -> Iterator[Session]:
-    # FastAPI dependency: one session per request.
+    # Dependency của FastAPI: mỗi request dùng một session riêng.
     with SessionLocal() as session:
         yield session

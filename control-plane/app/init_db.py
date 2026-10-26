@@ -1,6 +1,6 @@
-# Create missing tables: python -m app.init_db
-# Existing tables are not changed.
-from app import models  # noqa: F401  (registers the models)
+# Tạo các bảng còn thiếu: python -m app.init_db
+# Bảng đã có thì giữ nguyên, không sửa.
+from app import models  # noqa: F401  (import để đăng ký các model)
 from app.database import Base, engine
 
 
