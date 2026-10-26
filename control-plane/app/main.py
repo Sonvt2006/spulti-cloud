@@ -1,6 +1,7 @@
 from decimal import Decimal
 from uuid import UUID
 
+from app.api_keys import router as api_keys_router
 from app.auth import CurrentUser
 from app.auth import router as auth_router
 from app.celery_app import celery_app
@@ -15,6 +16,7 @@ from sqlalchemy.orm import Session
 
 app = FastAPI(title="Spulti-cloud Control Plane")
 app.include_router(auth_router)
+app.include_router(api_keys_router)
 
 
 class DemoTaskRequest(BaseModel):

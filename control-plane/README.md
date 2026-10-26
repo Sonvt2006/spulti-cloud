@@ -28,8 +28,9 @@ Hệ thống bao gồm 4 dịch vụ container hoạt động trong mạng nội
 │   ├── models.py          # Nơi duy nhất định nghĩa các bảng của database
 │   ├── init_db.py         # Script tạo bảng: python -m app.init_db
 │   ├── main.py            # Các HTTP endpoint của FastAPI (/health, /api/tasks/...)
-│   ├── auth.py            # Đăng ký, đăng nhập (/api/auth/...) và dependency get_current_user
-│   ├── security.py        # Băm mật khẩu (argon2) và tạo/kiểm tra JWT
+│   ├── auth.py            # Đăng ký, đăng nhập (/api/auth/...) và dependency get_current_user (JWT hoặc API key)
+│   ├── api_keys.py        # Tạo, liệt kê, thu hồi API key cho CLI (/api/api-keys)
+│   ├── security.py        # Băm mật khẩu (argon2), tạo/kiểm tra JWT, sinh và băm API key
 │   └── tasks.py           # Định nghĩa các Celery background task (spulti.demo_add)
 ├── db/
 │   └── seed.sql           # Dữ liệu mẫu để thử nghiệm
@@ -217,6 +218,31 @@ curl http://<EC2_PUBLIC_IP>/api/auth/me -H "Authorization: Bearer <ACCESS_TOKEN>
 ```
 Thiếu token, token sai, hết hạn hoặc tài khoản bị khóa (`is_active = false`) đều trả `401`.
 
+### API key cho CLI
+
+JWT hết hạn sau 60 phút nên CLI dùng **API key** dài hạn có dạng `spk_...`. API key được gửi trong cùng header `Authorization: Bearer <API_KEY>` như JWT, và dùng được ở mọi endpoint cần đăng nhập.
+
+Thông thường không cần gọi các endpoint dưới đây bằng tay, vì `spulti login` tự làm (xem [cli/README.md](../cli/README.md)).
+
+Tạo key (cần JWT hoặc một API key khác). `expires_in_days` (1–365) có thể bỏ trống để key không hết hạn:
+```bash
+curl -X POST http://<EC2_PUBLIC_IP>/api/api-keys \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -d '{"name": "peter-laptop"}'
+```
+**Kết quả mong đợi (`201 Created`)**. Trường `key` **chỉ trả về một lần**, database chỉ lưu `key_prefix` và mã băm SHA-256:
+```json
+{"id": 1, "name": "peter-laptop", "key_prefix": "spk_a1b2c3d4", "created_at": "...", "last_used_at": null, "expires_at": null, "key": "spk_a1b2c3d4..."}
+```
+
+Liệt kê các key chưa bị thu hồi và thu hồi một key theo `id`:
+```bash
+curl http://<EC2_PUBLIC_IP>/api/api-keys -H "Authorization: Bearer <API_KEY>"
+curl -X DELETE http://<EC2_PUBLIC_IP>/api/api-keys/1 -H "Authorization: Bearer <API_KEY>"
+```
+Thu hồi thành công trả `204`. Key không tồn tại, đã bị thu hồi hoặc thuộc người khác đều trả `404`. Mỗi người dùng có tối đa 20 key chưa thu hồi, vượt quá thì trả `409`. Key bị thu hồi hoặc hết hạn sẽ bị từ chối với `401`.
+
 ---
 
 ### 3. Gửi một tác vụ tính toán bất đồng bộ vào hàng đợi (phải đăng nhập có <ACCESS_TOKEN> mới gửi task được)
@@ -224,7 +250,7 @@ Gửi request `POST /api/tasks/demo` với hai số nguyên `a` và `b` (nằm t
 ```bash
 curl -X POST http://<EC2_PUBLIC_IP>/api/tasks/demo \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <ACCESS_TOKEN>"
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
   -d '{"a": 15, "b": 27}'
 ```
 **Kết quả mong đợi (`202 Accepted`)**:

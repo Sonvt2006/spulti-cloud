@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spulti-cli"
+version = "0.1.0"
+description = "CLI cho Spulti-cloud"
+requires-python = ">=3.11"
+# Chỉ dùng thư viện chuẩn để cài đặt nhẹ trên mọi máy.
+dependencies = []
+
+[project.scripts]
+spulti = "spulti_cli.main:main"

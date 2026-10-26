@@ -1,11 +1,14 @@
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from app.database import get_db
-from app.models import User
+from app.models import APIKey, User
 from app.security import (
+    API_KEY_PREFIX,
     JWT_EXPIRE_MINUTES,
     create_access_token,
     decode_access_token,
+    hash_api_key,
     hash_password,
     verify_password,
 )
@@ -61,6 +64,25 @@ _UNAUTHORIZED = HTTPException(
     headers={"WWW-Authenticate": "Bearer"},
 )
 
+# Chỉ cập nhật last_used_at mỗi phút một lần để không phải ghi DB ở mọi request.
+_LAST_USED_INTERVAL = timedelta(minutes=1)
+
+
+def _user_from_api_key(db: Session, key: str) -> User | None:
+    api_key = db.scalars(
+        select(APIKey).where(APIKey.key_hash == hash_api_key(key))
+    ).first()
+    now = datetime.now(UTC)
+    if api_key is None or api_key.revoked_at is not None:
+        return None
+    if api_key.expires_at is not None and api_key.expires_at <= now:
+        return None
+
+    if api_key.last_used_at is None or now - api_key.last_used_at > _LAST_USED_INTERVAL:
+        api_key.last_used_at = now
+        db.commit()
+    return api_key.user
+
 
 def get_current_user(
     db: DbSession,
@@ -69,14 +91,18 @@ def get_current_user(
     ],
 ) -> User:
     # Dependency cho mọi endpoint cần đăng nhập.
+    # Nhận JWT (Dashboard) hoặc API key "spk_..." (CLI) trong cùng header.
     if credentials is None:
         raise _UNAUTHORIZED
 
-    user_id = decode_access_token(credentials.credentials)
-    if user_id is None:
-        raise _UNAUTHORIZED
+    token = credentials.credentials
+    user: User | None
+    if token.startswith(API_KEY_PREFIX):
+        user = _user_from_api_key(db, token)
+    else:
+        user_id = decode_access_token(token)
+        user = db.get(User, user_id) if user_id is not None else None
 
-    user = db.get(User, user_id)
     if user is None or not user.is_active:
         raise _UNAUTHORIZED
     return user
