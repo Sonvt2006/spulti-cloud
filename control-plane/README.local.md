@@ -134,6 +134,17 @@ cd spulti-cloud/control-plane
 
 Các lệnh từ đây, trừ khi ghi khác, đều chạy tại **`control-plane`**. Không ghi đè `.env.local` hoặc SSH key đã dùng trước đó.
 
+**Chỉ tạo thư mục `.local`, không tạo thư mục mang tên `gcp-credentials.json` hoặc `spulti-gcp-test.pub`.** Hai đường dẫn đó phải là file, được copy ở bước 6 và 7. Sau khi hoàn thành, cấu trúc đúng là:
+
+```text
+control-plane/
+└── .local/                      ← thư mục
+    ├── gcp-credentials.json      ← file JSON credentials
+    └── spulti-gcp-test.pub       ← file SSH public key
+```
+
+Không dùng `mkdir` hoặc `New-Item -ItemType Directory` cho hai tên file này. Nếu đích đã là thư mục, lệnh copy thông thường có thể chép file nguồn vào bên trong thay vì thay thế thư mục; các lệnh bên dưới kiểm tra hoặc từ chối trường hợp đó.
+
 **Windows 11:**
 
 ```powershell
@@ -313,15 +324,19 @@ Copy file ADC vừa tạo vào vị trí Compose sẽ mount. Các đường dẫ
 **Windows 11:**
 
 ```powershell
-Copy-Item "$env:APPDATA\gcloud\application_default_credentials.json" .local/gcp-credentials.json
+if (Test-Path -LiteralPath '.\.local\gcp-credentials.json' -PathType Container) {
+    throw 'Đích gcp-credentials.json đang là thư mục. Xem mục IsADirectoryError ở bước 11 trước khi tiếp tục.'
+}
+Copy-Item -LiteralPath "$env:APPDATA\gcloud\application_default_credentials.json" -Destination '.\.local\gcp-credentials.json' -ErrorAction Stop
 ```
 
 **Ubuntu:**
 
 ```bash
-cp "$HOME/.config/gcloud/application_default_credentials.json" .local/gcp-credentials.json
-chmod 644 .local/gcp-credentials.json
+cp -T "$HOME/.config/gcloud/application_default_credentials.json" .local/gcp-credentials.json && chmod 644 .local/gcp-credentials.json
 ```
+
+`cp -T` trên Ubuntu coi đích là đường dẫn file, báo lỗi nếu đích đang là thư mục. Với PowerShell, kiểm tra `-PathType Container` phía trên ngăn copy nhầm vào thư mục. Không chèn dấu cách giữa `.local/` và tên file.
 
 Worker chạy bằng UID `10001`, nên file bind mount phải đọc được bởi UID này. Trên Ubuntu, `.local` đã đặt `700` để user khác trên host không truy cập, còn file bên trong dùng `644` để worker đọc được sau khi bind mount. Chỉ áp dụng cách này trong thư mục riêng đã bảo vệ. Trên Windows, giữ quyền thư mục cho tài khoản cá nhân và cho phép Docker Desktop truy cập ổ đĩa chứa repo.
 
@@ -329,7 +344,7 @@ Worker chạy bằng UID `10001`, nên file bind mount phải đọc được b�
 
 ### Cách B: Dùng JSON key nếu nhóm đã cấp
 
-Nếu quản trị viên cấp JSON key của đúng service account, copy vào **`control-plane/.local/gcp-credentials.json`** thay cho ADC ở cách A; không cần `gcloud auth activate-service-account` để Python dùng file này. Đối chiếu trường `client_email` với email service account ở đầu tài liệu.
+Nếu quản trị viên cấp JSON key của đúng service account, dùng lệnh copy theo hệ điều hành ở cách A nhưng thay đường dẫn nguồn bằng file key được cấp. Đích **`control-plane/.local/gcp-credentials.json` phải là file**, không phải thư mục. Không cần `gcloud auth activate-service-account` để Python dùng file này. Đối chiếu trường `client_email` với email service account ở đầu tài liệu.
 
 Nếu cần cấp key mới, quản trị viên dùng Google Cloud Console → IAM & Admin → Service Accounts → chọn service account → Keys → Add key → Create new key → JSON, nếu chính sách tổ chức cho phép. Không tắt chính sách cấm key để làm theo hướng dẫn này; dùng impersonation. Nguồn: [tạo và quản lý service account key](https://docs.cloud.google.com/iam/docs/keys-create-delete).
 
@@ -344,7 +359,10 @@ Script `app/scripts/try_gcp_adapter.py` đọc `/app-keys/spulti-gcp-test.pub` n
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
 ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\spulti-gcp-local" -C 'spulti-local'
-Copy-Item "$env:USERPROFILE\.ssh\spulti-gcp-local.pub" .local/spulti-gcp-test.pub
+if (Test-Path -LiteralPath '.\.local\spulti-gcp-test.pub' -PathType Container) {
+    throw 'Đích spulti-gcp-test.pub đang là thư mục. Xem mục IsADirectoryError ở bước 11 trước khi tiếp tục.'
+}
+Copy-Item -LiteralPath "$env:USERPROFILE\.ssh\spulti-gcp-local.pub" -Destination '.\.local\spulti-gcp-test.pub' -ErrorAction Stop
 ```
 
 Nếu thiếu `ssh-keygen`, cài **OpenSSH Client** trong Windows Settings → Optional features. Nếu key đã có, bỏ qua lệnh tạo và chỉ copy `.pub`.
@@ -355,15 +373,33 @@ Nếu thiếu `ssh-keygen`, cài **OpenSSH Client** trong Windows Settings → O
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 ssh-keygen -t ed25519 -f "$HOME/.ssh/spulti-gcp-local" -C 'spulti-local'
-cp "$HOME/.ssh/spulti-gcp-local.pub" .local/spulti-gcp-test.pub
-chmod 644 .local/spulti-gcp-test.pub
+cp -T "$HOME/.ssh/spulti-gcp-local.pub" .local/spulti-gcp-test.pub && chmod 644 .local/spulti-gcp-test.pub
 ```
 
 Đặt passphrase khi được hỏi. Private key giữ ở `~/.ssh`; chỉ public key được mount vào worker. Việc tạo VM không yêu cầu mở SSH; nếu cần SSH vào VM, cấu hình firewall theo IP của mình và kiểm tra chính sách OS Login. Adapter hiện dùng SSH key trong instance metadata.
 
 ## 8. Khởi động control plane local
 
-Sau khi hoàn thành credentials và SSH public key, chạy trong `control-plane`, ở terminal đã export AWS credentials:
+Sau khi hoàn thành credentials và SSH public key, kiểm tra cả hai đường dẫn là file. Chạy trong **`control-plane`**.
+
+**Windows 11:**
+
+```powershell
+foreach ($requiredFile in @('.\.local\gcp-credentials.json', '.\.local\spulti-gcp-test.pub')) {
+    if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
+        throw "Thiếu file hoặc đường dẫn đang là thư mục: $requiredFile"
+    }
+}
+Write-Output 'Hai file mount đã sẵn sàng.'
+```
+
+**Ubuntu:**
+
+```bash
+test -f .local/gcp-credentials.json && test -f .local/spulti-gcp-test.pub && echo 'Hai file mount đã sẵn sàng.'
+```
+
+Chỉ tiếp tục khi kiểm tra thành công. `create_host_path: false` trong Compose ngăn tự tạo đường dẫn còn thiếu, nhưng không thay thế việc kiểm tra một đường dẫn có sẵn là file hay thư mục. Sau đó chạy trong terminal đã export AWS credentials:
 
 ```text
 docker compose --env-file .env.local -f compose.local.yaml config --quiet
@@ -523,7 +559,8 @@ Source được copy lúc build, không mount trực tiếp; sửa Python cần 
 | --- | --- |
 | Docker không kết nối engine | Mở Docker Desktop và chọn Linux containers trên Windows; kiểm tra Docker service/group trên Ubuntu. |
 | Mount vẫn nhắc `/etc/spulti/...` | Đang dùng nhầm `compose.yaml`. Dùng riêng `-f compose.local.yaml`. |
-| `bind source path does not exist` | Tạo đủ `.local/gcp-credentials.json` và `.local/spulti-gcp-test.pub`; mount cố ý không tự tạo thư mục thay cho file. |
+| `bind source path does not exist` | Copy đủ hai **file** `.local/gcp-credentials.json` và `.local/spulti-gcp-test.pub` theo bước 6–7; không tạo thư mục với các tên đó. |
+| `IsADirectoryError` với credentials hoặc SSH public key | Đích mount trên host đang là thư mục, hoặc container còn giữ mount cũ. Đổi tên thư mục đó để giữ bản dự phòng, copy file thật bên trong ra đúng đường dẫn đích rồi kiểm tra bằng bước 8. Export lại AWS credentials và chạy `docker compose --env-file .env.local -f compose.local.yaml up -d --no-deps --force-recreate worker` để nhận mount mới. |
 | `Permission denied` với JSON/public key | Kiểm tra quyền file cho UID `10001`; Ubuntu dùng thư mục `.local` `700`, hai file mount `644`. Không đổi private SSH key thành `644`. |
 | `Permission denied` với AWS state | Chạy lại lệnh `chown` volume ở bước 8. |
 | `NoCredentialsError` / `ExpiredToken` | Đăng nhập AWS, export lại trong terminal hiện tại và `up -d --force-recreate worker`. |

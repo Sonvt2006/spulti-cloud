@@ -9,7 +9,7 @@ from app.adapters.base import CreateInstanceSpec
 from app.adapters.gcp import GCPAdapter
 
 # Giữ tên này cho toàn bộ vòng create → status → delete.
-INSTANCE_NAME = "spulti-gcp-test-01"
+INSTANCE_NAME = "spulti-gcp-long-test-01"
 CREATE_GENERATION = "01"
 USER = "long"
 
