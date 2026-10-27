@@ -169,6 +169,7 @@ def collect_gcp(
     locations: list[tuple[str, str | None]],
     *,
     limit_types: int | None = None,
+    discover_zone: str | None = None,
     include_risk: bool = True,
     dry_run: bool = False,
 ) -> dict[str, int]:
@@ -179,8 +180,29 @@ def collect_gcp(
         "locations_failed": 0,
     }
     names = list(_known_types("GCP", limit_types))
+    try:
+        if discover_zone:
+            names = GCPAdapter.offered_machine_types(project_id, discover_zone)
+
+            if limit_types is not None:
+                names = names[:limit_types]
+
+            if names and not dry_run:
+                specs = GCPAdapter.describe_machine_specs(
+                    project_id, discover_zone, names
+                )
+
+                with SessionLocal.begin() as db:
+                    upsert_machine_types(db, specs)
+        else:
+            names = list(_known_types("GCP", limit_types))
+
+    except Exception:
+        logger.exception("Failed to discover GCP machine types")
+        return totals
+
     if not names:
-        logger.warning("No GCP machine types in Catalog")
+        logger.warning("No GCP machine types found")
         return totals
     for region, zone in locations:
         try:

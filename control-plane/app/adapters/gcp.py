@@ -214,7 +214,7 @@ class GCPAdapter(CloudAdapter):
         )
         session = AuthorizedSession(credentials)
         url = (
-            "https://compute.googleapis.com/compute/v1/projects/"
+            "https://compute.googleapis.com/compute/beta/projects/"
             f"{quote(project_id, safe='')}/regions/{quote(region, safe='')}"
             "/advice/capacityHistory"
         )
