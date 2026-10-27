@@ -282,3 +282,30 @@ class AWSAdapter(CloudAdapter):
             else []
         )
         return MarketData(prices=prices, risks=risks)
+
+    @staticmethod
+    def available_zones(region: str) -> list[str]:
+        client = boto3.client("ec2", region_name=region)
+        result = client.describe_availability_zones(AllAvailabilityZones=False)
+
+        return sorted(
+            item["ZoneName"]
+            for item in result["AvailabilityZones"]
+            if item.get("State") == "available"
+            and item.get("ZoneType", "availability-zone") == "availability-zone"
+        )
+
+    @staticmethod
+    def offered_machine_types_in_zone(region: str, zone: str) -> list[str]:
+        client = boto3.client("ec2", region_name=region)
+        types = set()
+
+        paginator = client.get_paginator("describe_instance_type_offerings")
+
+        for page in paginator.paginate(
+            LocationType="availability-zone",
+            Filters=[{"Name": "location", "Values": [zone]}],
+        ):
+            types.update(item["InstanceType"] for item in page["InstanceTypeOfferings"])
+
+        return sorted(types)

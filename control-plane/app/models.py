@@ -113,6 +113,33 @@ class APIKey(Base):
 # ---------------------------------------------------------------------------
 
 
+class MachineTypeOffering(Base):
+    # Loại máy được cung cấp tại một Region/Zone..
+    __tablename__ = "machine_type_offerings"
+    __table_args__ = (
+        UniqueConstraint(
+            "machine_type_id",
+            "region",
+            "zone",
+            name="machine_type_offerings_unique",
+        ),
+    )
+
+    id: Mapped[int] = _id_pk()
+    machine_type_id: Mapped[int] = mapped_column(
+        ForeignKey("machine_types.id"),
+        nullable=False,
+        index=True,
+    )
+    region: Mapped[str] = mapped_column(String(50), nullable=False)
+    zone: Mapped[str] = mapped_column(String(50), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class MachineType(Base):
     # Danh sách loại máy của AWS và GCP.
     __tablename__ = "machine_types"
