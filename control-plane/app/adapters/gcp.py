@@ -12,8 +12,6 @@ class GCPAdapter(CloudAdapter):
         project_id: str,
         zone: str,
         subnetwork: str,
-        ssh_username: str,
-        ssh_public_key: str,
     ):
         self.client = compute_v1.InstancesClient()
 
@@ -23,9 +21,6 @@ class GCPAdapter(CloudAdapter):
         # Ví dụ:
         # projects/my-project/regions/asia-southeast1/subnetworks/my-subnet
         self.subnetwork = subnetwork
-
-        self.ssh_username = ssh_username
-        self.ssh_public_key = ssh_public_key.strip()
 
     @staticmethod
     def _to_info(instance) -> InstanceInfo:
@@ -48,10 +43,7 @@ class GCPAdapter(CloudAdapter):
             public_ip=public_ip,
         )
 
-    def create_instance(
-        self,
-        spec: CreateInstanceSpec,
-    ) -> InstanceInfo:
+    def create_instance(self, spec: CreateInstanceSpec) -> InstanceInfo:
         if spec.zone != self.zone:
             raise ValueError("Zone của spec khác zone của adapter")
 
@@ -96,12 +88,15 @@ class GCPAdapter(CloudAdapter):
                     ),
                     compute_v1.Items(
                         key="ssh-keys",
-                        value=(f"{self.ssh_username}:{self.ssh_public_key}"),
+                        value="\n".join(
+                            f"{spec.ssh_username}:{key}" for key in spec.ssh_public_keys
+                        ),
                     ),
                     compute_v1.Items(
                         key="block-project-ssh-keys",
                         value="true",
                     ),
+                    compute_v1.Items(key="enable-oslogin", value="FALSE"),
                 ]
             ),
             labels={

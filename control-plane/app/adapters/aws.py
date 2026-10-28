@@ -7,6 +7,7 @@ from app.adapters.base import (
     CreateInstanceSpec,
     InstanceInfo,
 )
+from app.adapters.cloud_init import build_aws_user_data
 
 
 class AWSAdapter(CloudAdapter):
@@ -15,15 +16,11 @@ class AWSAdapter(CloudAdapter):
         region: str,
         subnet_id: str,
         security_group_ids: list[str],
-        key_name: str,
     ):
         # boto3 tự tìm credentials từ môi trường hoặc IAM role.
         self.ec2 = boto3.client("ec2", region_name=region)
         self.subnet_id = subnet_id
         self.security_group_ids = security_group_ids
-
-        # Tên EC2 key pair đã tồn tại trong region.
-        self.key_name = key_name
 
     @staticmethod
     def _to_info(instance: dict) -> InstanceInfo:
@@ -40,6 +37,7 @@ class AWSAdapter(CloudAdapter):
         self,
         spec: CreateInstanceSpec,
     ) -> InstanceInfo:
+        user_data = build_aws_user_data(spec)
         # Đọc tên root device của AMI,
         # tránh giả định mọi image đều dùng /dev/sda1.
         images = self.ec2.describe_images(ImageIds=[spec.image_id])["Images"]
@@ -57,7 +55,6 @@ class AWSAdapter(CloudAdapter):
             MinCount=1,
             MaxCount=1,
             ClientToken=spec.request_id,
-            KeyName=self.key_name,
             Placement={
                 "AvailabilityZone": spec.zone,
             },
@@ -88,7 +85,7 @@ class AWSAdapter(CloudAdapter):
                     },
                 }
             ],
-            UserData=spec.startup_script,
+            UserData=user_data,
             MetadataOptions={
                 "HttpTokens": "required",
             },
@@ -126,13 +123,16 @@ class AWSAdapter(CloudAdapter):
     @staticmethod
     def offered_machine_types(region: str) -> list[str]:
         """Types offered in a region, NOT proof of free Spot capacity."""
+
         client = boto3.client("ec2", region_name=region)
         types = set()
         pages = client.get_paginator("describe_instance_type_offerings").paginate(
             LocationType="region"
         )
+
         for page in pages:
             types.update(x["InstanceType"] for x in page["InstanceTypeOfferings"])
+
         return sorted(types)
 
     @staticmethod
@@ -142,6 +142,7 @@ class AWSAdapter(CloudAdapter):
 
         client = boto3.client("ec2", region_name=region)
         specs = []
+
         for i in range(0, len(instance_types), 50):
             names = instance_types[i : i + 50]
             for page in client.get_paginator("describe_instance_types").paginate(
@@ -171,10 +172,12 @@ class AWSAdapter(CloudAdapter):
 
         if not instance_types:
             return []
+
         ec2 = boto3.client("ec2", region_name=region)
         now = datetime.now(UTC)
         latest = {}
         paginator = ec2.get_paginator("describe_spot_price_history")
+
         for i in range(0, len(instance_types), 25):
             for page in paginator.paginate(
                 InstanceTypes=instance_types[i : i + 25],
