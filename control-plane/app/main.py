@@ -7,6 +7,7 @@ from app.auth import router as auth_router
 from app.celery_app import celery_app
 from app.database import get_db
 from app.services.catalog import find_machine_types
+from app.ssh_keys import router as ssh_keys_router
 from app.tasks import demo_add
 from celery.result import AsyncResult
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session
 app = FastAPI(title="Spulti-cloud Control Plane")
 app.include_router(auth_router)
 app.include_router(api_keys_router)
+app.include_router(ssh_keys_router)
 
 
 class DemoTaskRequest(BaseModel):

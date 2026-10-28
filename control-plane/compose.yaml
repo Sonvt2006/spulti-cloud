@@ -72,13 +72,6 @@ services:
           create_host_path: false
 
       - type: bind
-        source: /etc/spulti/ssh/spulti-gcp-test.pub
-        target: /app-keys/spulti-gcp-test.pub
-        read_only: true
-        bind:
-          create_host_path: false
-
-      - type: bind
         source: /var/lib/spulti-tests
         target: /var/lib/spulti-tests
         bind:

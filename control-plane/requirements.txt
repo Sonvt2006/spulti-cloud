@@ -9,3 +9,4 @@ argon2-cffi>=23.1,<26.0
 boto3
 google-cloud-compute
 google-auth
+cryptography>=43,<51
