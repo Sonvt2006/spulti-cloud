@@ -1,8 +1,11 @@
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
+
+from app.ssh import normalize_public_key
 
 if TYPE_CHECKING:
     from app.services.catalog import MachineSpec
@@ -21,6 +24,10 @@ class CreateInstanceSpec:
     # Khi retry cùng yêu cầu phải dùng lại giá trị này.
     request_id: str
 
+    # Snapshot của owner's DB keys cho yêu cầu tạo này.
+    ssh_public_keys: tuple[str, ...]
+    ssh_username: str = "spulti"
+
     disk_size_gb: int = 30
     gpu_type: str | None = None
     gpu_count: int = 0
@@ -29,6 +36,22 @@ class CreateInstanceSpec:
     def __post_init__(self):
         if self.disk_size_gb <= 0:
             raise ValueError("disk_size_gb phải lớn hơn 0")
+
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", self.ssh_username) or (
+            self.ssh_username == "root"
+        ):
+            raise ValueError("ssh_username phải là tên user Linux hợp lệ, khác root")
+
+        if not self.ssh_public_keys or isinstance(self.ssh_public_keys, str):
+            raise ValueError("Phải có ít nhất một SSH public key")
+
+        object.__setattr__(
+            self,
+            "ssh_public_keys",
+            tuple(
+                dict.fromkeys(normalize_public_key(key) for key in self.ssh_public_keys)
+            ),
+        )
 
 
 @dataclass(frozen=True)
