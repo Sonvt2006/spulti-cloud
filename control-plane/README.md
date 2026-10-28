@@ -293,6 +293,55 @@ curl http://<EC2_PUBLIC_IP>/api/tasks/<TASK_ID> -H "Authorization: Bearer <ACCES
 
 Git pull code mới nhất về và chạy docker build để có môi trường mới nhất. (CHẠY TRÊN MÁY EC2)
 
+### Đăng ký SSH public key trước khi tạo máy
+
+Khách giữ private key trên máy cá nhân và gửi public key OpenSSH qua API:
+
+```bash
+curl -X POST http://<EC2_PUBLIC_IP>/api/ssh-keys \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"laptop","public_key":"ssh-ed25519 <BASE64_PUBLIC_KEY>"}'
+
+curl http://<EC2_PUBLIC_IP>/api/ssh-keys \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+```
+
+API lấy chủ sở hữu từ token, lưu vào bảng `ssh_keys` hiện có cùng fingerprint
+SHA256. Hỗ trợ Ed25519, ECDSA và RSA từ 2048 bit; từ chối private key, key sai
+định dạng hoặc nhiều dòng. Key/tên trùng trong cùng tài khoản trả `409`.
+Chạy `python -m app.init_db` nếu database chưa có bảng; không cần đổi schema.
+
+`build_instance_spec()` trong `app/services/instance_manager.py` đọc tất cả key
+của tài khoản đang hoạt động, rồi đưa vào `CreateInstanceSpec.ssh_public_keys`.
+Chưa có key thì dừng trước khi tạo VM. AWS dùng cloud-init để tạo user `spulti`
+với quyền sudo và cài key, không cần EC2 Key Pair/`KeyName`. Startup script vẫn
+chạy như trước. GCP dùng metadata `ssh-keys`, chặn project SSH keys và đặt
+`enable-oslogin=FALSE` để dùng key trực tiếp. Nếu tổ chức bắt buộc OS Login,
+luồng metadata này cần được thay bằng tích hợp OS Login phù hợp.
+
+Image AWS cần hỗ trợ cloud-init; image GCP cần guest environment hỗ trợ SSH
+metadata. Security Group/firewall vẫn phải cho phép TCP 22. Khi bootstrap xong:
+
+```bash
+ssh -i ~/.ssh/id_ed25519 spulti@<VM_PUBLIC_IP>
+```
+
+Key chỉ được cài khi tạo VM; thêm key trong DB không cập nhật VM đang chạy.
+Hai script dưới đây dành cho quản trị viên thử nghiệm, dùng `--user-id` từ
+database (có thể xem ID qua `/api/auth/me`). Chúng không tạo bản ghi Machine/
+Instance. Repository hiện chưa có API tạo máy cho khách; khi nối API/worker,
+truyền `user.id` đã xác thực hoặc `machine.user_id` vào `build_instance_spec()`,
+không nhận user ID tùy ý từ khách. Lưu spec và request ID trước khi gọi adapter,
+và dùng lại nguyên snapshot khi retry.
+
+Các script lưu snapshot ở `/var/lib/spulti-tests/*-adapter-test.json`.
+Sau khi xác nhận máy thử cũ đã xóa, lưu trữ file state trước khi bắt đầu lượt mới.
+Với state AWS cũ dùng `key_name`, vẫn có thể chạy `status`/`delete`; không retry
+`create` bằng cấu hình key mới trên request ID cũ. GCP cần đổi `INSTANCE_NAME`
+hoặc tăng `CREATE_GENERATION` cho lượt tạo mới. Không còn cần mount file
+`/app-keys/spulti-gcp-test.pub` vào worker.
+
 ### 1. Kiểm tra thư viện trong worker
 ```bash
 docker compose exec worker python -c \
@@ -312,16 +361,16 @@ docker compose exec worker python -c \
 ### 4. Chạy tạo, xem và xóa Spot instance
 AWS:
 ```bash
-docker compose exec worker python -m app.scripts.try_aws_adapter create
+docker compose exec worker python -m app.scripts.try_aws_adapter create --user-id 1
 
 docker compose exec worker python -m app.scripts.try_aws_adapter status
 
 docker compose exec worker python -m app.scripts.try_aws_adapter delete
 ```
 
-GCP: (chú ý trước khi chạy vào file /control-plane/app/scripts/try_gcp_adapter.py sửa USER theo tên và CREATE_GENERATION theo số lần đã chạy)
+GCP: kiểm tra `INSTANCE_NAME` và `CREATE_GENERATION` trong script trước lượt thử mới.
 ```bash
-docker compose exec worker python -m app.scripts.try_gcp_adapter create
+docker compose exec worker python -m app.scripts.try_gcp_adapter create --user-id 1
 
 docker compose exec worker python -m app.scripts.try_gcp_adapter status
 
@@ -329,6 +378,14 @@ docker compose exec worker python -m app.scripts.try_gcp_adapter delete
 ```
 
 ## 7. Các lệnh vận hành và bảo trì thường dùng
+
+Kiểm tra luồng SSH bằng database SQLite tạm và cloud SDK giả lập, không tạo VM
+thật (chạy từ thư mục `control-plane`):
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m unittest discover -s tests -v
+```
 
 * **Xem log toàn bộ hệ thống theo thời gian thực**:
   ```bash
