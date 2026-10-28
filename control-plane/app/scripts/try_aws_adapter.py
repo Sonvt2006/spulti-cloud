@@ -7,11 +7,14 @@ from uuid import uuid4
 
 from app.adapters.aws import AWSAdapter
 from app.adapters.base import CreateInstanceSpec
+from app.database import SessionLocal
+from app.services.instance_manager import build_instance_spec
 
 STATE_FILE = Path("/var/lib/spulti-tests/aws-adapter-test.json")
 
 
 def save_state(state: dict) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(
         json.dumps(state, indent=2),
         encoding="utf-8",
@@ -29,29 +32,32 @@ def required_env(name: str) -> str:
     return value
 
 
-def new_state() -> dict:
+def new_state(user_id: int) -> dict:
     request_id = str(uuid4())
 
-    spec = CreateInstanceSpec(
-        machine_id=0,  # Test độc lập, không ghi DB.
-        name=f"spulti-test-{request_id[:8]}",
-        machine_type="t3.small",
-        image_id="ami-033ea4ff4a9c726dc",  # Ubuntu Server 22.04 LTS
-        zone="us-east-1c",
-        request_id=request_id,
-        disk_size_gb=10,
-        startup_script=(
-            "#!/bin/bash\n"
-            "mkdir -p /workspace\n"
-            "echo 'AWS adapter test OK' > /workspace/test.txt\n"
-        ),
-    )
+    with SessionLocal() as db:
+        spec = build_instance_spec(
+            db,
+            user_id=user_id,
+            machine_id=0,  # Đọc key từ DB, không ghi Machine/Instance thử nghiệm.
+            name=f"spulti-test-{request_id[:8]}",
+            machine_type="t3.small",
+            image_id="ami-033ea4ff4a9c726dc",  # Ubuntu Server 22.04 LTS
+            zone="us-east-1c",
+            request_id=request_id,
+            disk_size_gb=10,
+            startup_script=(
+                "#!/bin/bash\n"
+                "mkdir -p /workspace\n"
+                "echo 'AWS adapter test OK' > /workspace/test.txt\n"
+            ),
+        )
 
     return {
         "region": "us-east-1",
         "subnet_id": "subnet-0ceb087f813c4bf6c",
         "security_group_ids": ["sg-018c6610dc3cbedbe"],
-        "key_name": "spulti-key",
+        "user_id": user_id,
         "spec": asdict(spec),
         "instance_id": None,
     }
@@ -62,7 +68,6 @@ def make_adapter(state: dict) -> AWSAdapter:
         region=state["region"],
         subnet_id=state["subnet_id"],
         security_group_ids=state["security_group_ids"],
-        key_name=state["key_name"],
     )
 
 
@@ -76,17 +81,27 @@ def main():
         "action",
         choices=["create", "status", "delete"],
     )
+    parser.add_argument("--user-id", type=int, help="ID tài khoản trong database")
     args = parser.parse_args()
 
     if args.action == "create":
+        if args.user_id is None:
+            parser.error("create yêu cầu --user-id của tài khoản đã đăng ký public key")
         if STATE_FILE.exists():
             state = load_state()
         else:
-            state = new_state()
+            state = new_state(args.user_id)
             save_state(state)
 
-        adapter = make_adapter(state)
+        if state.get("user_id") != args.user_id or not state["spec"].get(
+            "ssh_public_keys"
+        ):
+            raise ValueError(
+                "State thuộc tài khoản khác hoặc dùng KeyPair cũ. "
+                "Kiểm tra/xóa instance cũ rồi lưu trữ file state trước khi tạo mới."
+            )
 
+        adapter = make_adapter(state)
         if state["instance_id"]:
             print("Đã có instance trong file trạng thái:")
             show(adapter.get_instance(state["instance_id"]))
@@ -102,6 +117,7 @@ def main():
         state["instance_id"] = result.instance_ref
         save_state(state)
         show(result)
+        print(f"SSH: ssh {state['spec']['ssh_username']}@<PUBLIC_IP>")
 
         print("\nĐã lưu instance ID. Dùng lệnh status để kiểm tra.")
         return
