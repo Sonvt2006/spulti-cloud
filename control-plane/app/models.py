@@ -1,9 +1,12 @@
-from datetime import datetime
+from __future__ import annotations
+
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 from app.database import Base
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -34,6 +37,10 @@ def _created_at() -> Mapped[datetime]:
     )
 
 
+def utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
 # ---------------------------------------------------------------------------
 # Người dùng và xác thực
 # ---------------------------------------------------------------------------
@@ -59,10 +66,10 @@ class User(Base):
         onupdate=func.now(),
     )
 
-    ssh_keys: Mapped[list["SSHKey"]] = relationship(
+    ssh_keys: Mapped[list[SSHKey]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
-    api_keys: Mapped[list["APIKey"]] = relationship(
+    api_keys: Mapped[list[APIKey]] = relationship(
         back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -311,3 +318,30 @@ class SpotRisk(Base):
     )
     period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentJob(Base):
+    __tablename__ = "agent_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    total_steps: Mapped[int] = mapped_column(Integer, nullable=False)
+    checkpoint_every: Mapped[int] = mapped_column(Integer, nullable=False)
+    heartbeat_every: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    current_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    checkpoint_step: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # JSONB for production Postgres; JSON type on SQLite for isolated tests.
+    checkpoint_data: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -12,6 +12,7 @@ venv/
 .mypy_cache/
 __pycache__/
 *.pyc
+*.py[cod]
 
 # Secrets
 .env
@@ -24,3 +25,6 @@ __pycache__/
 
 .aws-adapter-test.json
 .gcp-adapter-test.json
+
+state/
+.pytest_cache/
