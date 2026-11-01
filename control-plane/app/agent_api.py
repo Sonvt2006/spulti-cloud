@@ -15,9 +15,9 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from app.agent_models import AgentJob
 from app.auth import CurrentUser
 from app.database import get_db
+from app.models import AgentJob
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session

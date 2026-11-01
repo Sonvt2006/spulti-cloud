@@ -28,3 +28,4 @@ __pycache__/
 
 state/
 .pytest_cache/
+state-*/

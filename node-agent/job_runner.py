@@ -1,7 +1,7 @@
-"""Demo workload with checkpoint resume and interruption-safe saving.
+"""Checkpoint-capable *demo counter* workload, optionally linked to Control Plane.
 
-Only the counter demo is recoverable. Arbitrary external programs need their own
-checkpoint / resume integration; this MVP does not snapshot processes or memory.
+Only this counter is recoverable. Arbitrary applications need their own
+checkpoint/restore protocol; this does not snapshot a process or its memory.
 """
 
 from __future__ import annotations
@@ -12,13 +12,45 @@ import time
 
 from checkpoint import CheckpointStore
 from config import AgentConfig
+from control_plane import ControlPlaneClient
 from heartbeat import HeartbeatStore
 
 
 def run_job(config: AgentConfig) -> int:
-    checkpoint = CheckpointStore(config.state_dir, config.job_id, config.total_steps)
+    store = CheckpointStore(config.state_dir, config.job_id, config.total_steps)
     heartbeat = HeartbeatStore(config.state_dir, config.job_id, config.total_steps)
-    existing = checkpoint.load()
+    remote = (
+        ControlPlaneClient(config.control_plane_url, config.agent_token, config.job_id)
+        if config.control_plane_url and config.agent_token
+        else None
+    )
+
+    existing = store.load()
+    if remote:
+        remote.verify_config(
+            config.total_steps, config.checkpoint_every, config.heartbeat_every
+        )
+        from_server = remote.get_checkpoint()
+        if from_server is not None:
+            # A fresh replacement VM with an empty state/ directory downloads
+            # its latest durable checkpoint from the shared Control Plane DB.
+            server_step = from_server.get("last_completed_step", -1)
+            local_step = existing["last_completed_step"] if existing else -1
+            if server_step > local_step or (
+                server_step == local_step and from_server.get("status") == "COMPLETED"
+            ):
+                store.restore_remote(from_server)
+                existing = store.load()
+                print(
+                    f"[agent] RESTORED_FROM_CONTROL_PLANE step={server_step}",
+                    flush=True,
+                )
+            elif local_step > server_step:
+                # A previous local checkpoint might be newer than remote if
+                # the process lost network connectivity during upload.
+                remote.save_checkpoint(existing)
+        elif existing is not None:
+            remote.save_checkpoint(existing)
 
     if existing is not None and existing["status"] == "COMPLETED":
         print(
@@ -26,18 +58,33 @@ def run_job(config: AgentConfig) -> int:
             flush=True,
         )
         heartbeat.write(config.total_steps, config.total_steps, "COMPLETED")
+        if remote:
+            remote.send_heartbeat(config.total_steps, config.total_steps, "COMPLETED")
         return 0
 
-    last_persisted_step = existing["last_completed_step"] if existing is not None else 0
-    current_step = last_persisted_step
+    persisted = existing["last_completed_step"] if existing is not None else 0
+    current = persisted
     print(
-        f"[agent] job={config.job_id} RESUME_FROM={last_persisted_step} "
-        f"NEXT_STEP={last_persisted_step + 1} TOTAL={config.total_steps}",
+        f"[agent] job={config.job_id} RESUME_FROM={persisted} "
+        f"NEXT_STEP={persisted + 1} TOTAL={config.total_steps}",
         flush=True,
     )
+
+    def checkpoint_now(step: int, status: str) -> None:
+        store.save(step, status)
+        if remote:
+            latest = store.load()
+            assert latest is not None
+            remote.save_checkpoint(latest)
+
+    def heartbeat_now(step: int, saved: int, status: str) -> None:
+        heartbeat.write(step, saved, status)
+        if remote:
+            remote.send_heartbeat(step, saved, status)
+
     if existing is None:
-        checkpoint.save(0, "RUNNING")
-    heartbeat.write(current_step, last_persisted_step, "RUNNING")
+        checkpoint_now(0, "RUNNING")
+    heartbeat_now(current, persisted, "RUNNING")
 
     stopping = False
 
@@ -49,50 +96,41 @@ def run_job(config: AgentConfig) -> int:
     old_sigterm = signal.signal(signal.SIGTERM, handle_stop)
     old_sigint = signal.signal(signal.SIGINT, handle_stop)
     try:
-        for step in range(last_persisted_step + 1, config.total_steps + 1):
+        for step in range(persisted + 1, config.total_steps + 1):
             if stopping:
                 break
             if config.step_delay:
                 time.sleep(config.step_delay)
-            # A real workload would perform actual work here.
-            current_step = step
+            current = step
 
-            # Simulate SIGKILL / unexpected power loss *before* checkpointing.
             if config.simulate_crash_at == step:
                 print(
-                    f"[agent] SIMULATED_CRASH_AT={step};"
-                    f"persisted={last_persisted_step}",
+                    f"[agent] SIMULATED_CRASH_AT={step}; persisted={persisted}",
                     flush=True,
                 )
-                os._exit(
-                    75
-                )  # Test-only; intentionally bypasses cleanup and signal handlers.
+                os._exit(75)
 
             if step == config.total_steps:
-                checkpoint.save(step, "COMPLETED")
-                last_persisted_step = step
-                heartbeat.write(step, last_persisted_step, "COMPLETED")
+                checkpoint_now(step, "COMPLETED")
+                persisted = step
+                heartbeat_now(step, persisted, "COMPLETED")
                 print(f"[agent] COMPLETED job={config.job_id} steps={step}", flush=True)
                 return 0
 
             if step % config.checkpoint_every == 0:
-                checkpoint.save(step, "RUNNING")
-                last_persisted_step = step
+                checkpoint_now(step, "RUNNING")
+                persisted = step
                 print(f"[agent] CHECKPOINT step={step}", flush=True)
 
             if step % config.heartbeat_every == 0:
-                heartbeat.write(step, last_persisted_step, "RUNNING")
+                heartbeat_now(step, persisted, "RUNNING")
                 print(
-                    f"[agent] HEARTBEAT step={step};"
-                    f"persisted={last_persisted_step}",
-                    flush=True,
+                    f"[agent] HEARTBEAT step={step} persisted={persisted}", flush=True
                 )
 
-        # A graceful stop can save the last completed step,
-        # even between periodic checkpoints.
-        checkpoint.save(current_step, "INTERRUPTED")
-        heartbeat.write(current_step, current_step, "INTERRUPTED")
-        print(f"[agent] INTERRUPTED saved_step={current_step}", flush=True)
+        checkpoint_now(current, "INTERRUPTED")
+        heartbeat_now(current, current, "INTERRUPTED")
+        print(f"[agent] INTERRUPTED saved_step={current}", flush=True)
         return 130
     finally:
         signal.signal(signal.SIGTERM, old_sigterm)

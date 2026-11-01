@@ -35,8 +35,8 @@ class ControlPlaneClient:
             "::1",
         ):
             raise ValueError(
-                "Non-loopback Control Plane URL MUST use "
-                "HTTPS to protect the agent token"
+                "Non-loopback Control Plane URL MUST "
+                "use HTTPS to protect the agent token"
             )
         self.base_url = base_url.rstrip("/")
         self.token = token
@@ -64,16 +64,18 @@ class ControlPlaneClient:
                     raw = response.read(32 * 1024)
                     return json.loads(raw.decode("utf-8"))
             except HTTPError as exc:
-                if exc.code == 404 and allow_404:
-                    return None
-                # Non-retryable auth/schema/conflict error: fail rather than
-                # pretending a checkpoint was stored successfully.
-                if exc.code not in (429, 500, 502, 503, 504):
-                    detail = exc.read(256).decode("utf-8", "replace")
-                    raise RemoteError(
-                        f"Control Plane HTTP {exc.code}: {detail}"
-                    ) from exc
-                reason = f"HTTP {exc.code}"
+                try:
+                    if exc.code == 404 and allow_404:
+                        return None
+                    # Do not silently ignore failed uploads or bad tokens.
+                    if exc.code not in (429, 500, 502, 503, 504):
+                        detail = exc.read(256).decode("utf-8", "replace")
+                        raise RemoteError(
+                            f"Control Plane HTTP {exc.code}: {detail}"
+                        ) from exc
+                    reason = f"HTTP {exc.code}"
+                finally:
+                    exc.close()
             except (URLError, TimeoutError, OSError) as exc:
                 reason = str(exc)
             if attempt < 2:
@@ -90,8 +92,8 @@ class ControlPlaneClient:
             info.get("heartbeat_every"),
         ) != (total_steps, checkpoint_every, heartbeat_every):
             raise RemoteError(
-                "Job config mismatch: use the exact steps/intervals "
-                "returned by POST /api/agent/jobs"
+                "Job config mismatch: use the exact steps"
+                "/intervals returned by POST /api/agent/jobs"
             )
         if info.get("status") == "COMPLETED":
             # Agent still downloads final checkpoint to ensure local completion marker.
