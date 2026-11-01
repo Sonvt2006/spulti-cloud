@@ -6,6 +6,7 @@ from app.auth import CurrentUser
 from app.auth import router as auth_router
 from app.celery_app import celery_app
 from app.database import get_db
+from app.placement import router as placement_router
 from app.services.catalog import find_machine_types
 from app.ssh_keys import router as ssh_keys_router
 from app.tasks import demo_add
@@ -19,6 +20,7 @@ app = FastAPI(title="Spulti-cloud Control Plane")
 app.include_router(auth_router)
 app.include_router(api_keys_router)
 app.include_router(ssh_keys_router)
+app.include_router(placement_router)
 
 
 class DemoTaskRequest(BaseModel):
