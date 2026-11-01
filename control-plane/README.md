@@ -377,6 +377,12 @@ docker compose exec worker python -m app.scripts.try_gcp_adapter status
 docker compose exec worker python -m app.scripts.try_gcp_adapter delete
 ```
 
+## Placement Engine: đề xuất máy
+
+Đã có `POST /api/placement/recommendations` để lọc và xếp hạng máy theo ba chế độ
+`SAVING`, `STABLE`, `BALANCED`. Xem [cách gọi API, quy tắc xếp hạng và tích hợp
+Instance Manager](PLACEMENT.md). API chỉ đề xuất; chưa tạo máy hoặc xác minh quota cloud.
+
 ## 7. Các lệnh vận hành và bảo trì thường dùng
 
 Kiểm tra luồng SSH bằng database SQLite tạm và cloud SDK giả lập, không tạo VM
