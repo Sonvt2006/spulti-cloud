@@ -1,6 +1,7 @@
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 
 celery_app = Celery(
     "spulti",
@@ -24,3 +25,29 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     worker_prefetch_multiplier=1,
 )
+
+
+# UTC schedule. Keep exactly one beat service for this application.
+celery_app.conf.timezone = "UTC"
+celery_app.conf.beat_schedule = {
+    "aws-spot-prices-every-15-min": {
+        "task": "spulti.market.collect",
+        "schedule": crontab(minute="*/15"),
+        "args": ("AWS", "prices"),
+    },
+    "gcp-spot-prices-every-15-min": {
+        "task": "spulti.market.collect",
+        "schedule": crontab(minute="5,20,35,50"),
+        "args": ("GCP", "prices"),
+    },
+    "aws-spot-risks-daily": {
+        "task": "spulti.market.collect",
+        "schedule": crontab(minute=20, hour=0),
+        "args": ("AWS", "risks"),
+    },
+    "gcp-spot-risks-daily": {
+        "task": "spulti.market.collect",
+        "schedule": crontab(minute=35, hour=0),
+        "args": ("GCP", "risks"),
+    },
+}

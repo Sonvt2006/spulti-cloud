@@ -129,7 +129,9 @@ def collect_aws(
     limit_types: int | None = None,
     include_risk: bool = True,
     dry_run: bool = False,
+    include_price: bool = True,
 ) -> dict[str, int]:
+    """Persist AWS Spot prices and/or interruption bucket observations."""
     totals = {"prices_saved": 0, "risks_saved": 0, "regions_ok": 0, "regions_failed": 0}
     for region in regions:
         try:
@@ -146,7 +148,21 @@ def collect_aws(
             if not names:
                 logger.warning("No AWS types to collect in %s", region)
                 continue
-            data = AWSAdapter.get_market_data(region, names, include_risk=include_risk)
+
+            # Avoid an unnecessary price API call on the daily risk-only task.
+            if include_price and include_risk:
+                data = AWSAdapter.get_market_data(region, names, include_risk=True)
+            else:
+                data = MarketData(
+                    prices=AWSAdapter.get_spot_prices(region, names)
+                    if include_price
+                    else [],
+                    risks=(
+                        AWSAdapter.get_interruption_risks(region, names)
+                        if include_risk
+                        else []
+                    ),
+                )
             outcome = save_market_data(data, dry_run=dry_run)
             totals["prices_saved"] += outcome["prices_saved"]
             totals["risks_saved"] += outcome["risks_saved"]
@@ -172,38 +188,37 @@ def collect_gcp(
     discover_zone: str | None = None,
     include_risk: bool = True,
     dry_run: bool = False,
+    include_price: bool = True,
 ) -> dict[str, int]:
+    """Persist GCP regional prices and/or zonal preemption statistics."""
     totals = {
         "prices_saved": 0,
         "risks_saved": 0,
         "locations_ok": 0,
         "locations_failed": 0,
     }
-    names = list(_known_types("GCP", limit_types))
     try:
         if discover_zone:
             names = GCPAdapter.offered_machine_types(project_id, discover_zone)
-
             if limit_types is not None:
                 names = names[:limit_types]
-
             if names and not dry_run:
                 specs = GCPAdapter.describe_machine_specs(
                     project_id, discover_zone, names
                 )
-
                 with SessionLocal.begin() as db:
                     upsert_machine_types(db, specs)
         else:
             names = list(_known_types("GCP", limit_types))
-
     except Exception:
         logger.exception("Failed to discover GCP machine types")
+        totals["locations_failed"] += len(locations)
         return totals
 
     if not names:
         logger.warning("No GCP machine types found")
         return totals
+
     for region, zone in locations:
         try:
             if zone is None:
@@ -212,29 +227,24 @@ def collect_gcp(
                     region,
                     names,
                     include_risk=include_risk,
+                    include_price=include_price,
                 )
             else:
-                prices = GCPAdapter.get_spot_prices(
-                    project_id,
-                    region,
-                    names,
+                # GCP Spot price history is regional; preemption history may be zonal.
+                prices = (
+                    GCPAdapter.get_spot_prices(project_id, region, names)
+                    if include_price
+                    else []
                 )
-
                 risks = (
                     GCPAdapter.get_interruption_risks(
-                        project_id,
-                        region,
-                        names,
-                        zone=zone,
+                        project_id, region, names, zone=zone
                     )
                     if include_risk
                     else []
                 )
+                data = MarketData(prices=prices, risks=risks)
 
-                data = MarketData(
-                    prices=prices,
-                    risks=risks,
-                )
             outcome = save_market_data(data, dry_run=dry_run)
             totals["prices_saved"] += outcome["prices_saved"]
             totals["risks_saved"] += outcome["risks_saved"]

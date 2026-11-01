@@ -9,6 +9,11 @@ x-app: &app
     JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env.local}
     CELERY_BROKER_URL: redis://redis:6379/0
     CELERY_RESULT_BACKEND: redis://redis:6379/1
+    MARKET_AWS_REGIONS: ${MARKET_AWS_REGIONS:-us-east-1}
+    MARKET_GCP_PROJECT_ID: ${MARKET_GCP_PROJECT_ID:-spulti-cloud}
+    MARKET_GCP_REGION: ${MARKET_GCP_REGION:-asia-southeast1}
+    MARKET_GCP_ZONES: ${MARKET_GCP_ZONES:-asia-southeast1-b}
+    MARKET_LIMIT_TYPES: "${MARKET_LIMIT_TYPES-}"
   depends_on:
     postgres:
       condition: service_healthy
@@ -81,6 +86,19 @@ services:
       - test_state:/var/lib/spulti-tests
     command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
     stop_grace_period: 60s
+
+  beat:
+      <<: *app
+      command:
+        - celery
+        - -A
+        - app.celery_app:celery_app
+        - beat
+        - --loglevel=INFO
+        - --schedule=/tmp/celerybeat-schedule
+      depends_on:
+        redis:
+          condition: service_healthy
 
   nginx:
     image: nginx:stable-alpine
