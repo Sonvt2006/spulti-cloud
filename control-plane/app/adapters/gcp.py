@@ -220,6 +220,23 @@ class GCPAdapter(CloudAdapter):
             return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
         for name in machine_types:
+            is_bare_metal = "-metal" in name
+
+            is_tpu = name.startswith(
+                (
+                    "ct3-",
+                    "ct3p-",
+                    "ct4p-",
+                    "ct5lp-",
+                    "ct5p-",
+                    "ct6e-",
+                    "tpu7x-",
+                )
+            )
+
+            if is_bare_metal or is_tpu:
+                logging.info("Skip unsupported GCP market type: %s", name)
+                continue
             body = {
                 "instanceProperties": {
                     "machineType": name,

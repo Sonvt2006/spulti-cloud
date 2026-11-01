@@ -1,6 +1,10 @@
+import logging
+import os
 import time
+from uuid import uuid4
 
 from app.celery_app import celery_app
+from redis import Redis
 
 
 @celery_app.task(name="spulti.demo_add")
@@ -13,3 +17,115 @@ def demo_add(a: int, b: int) -> dict:
         "result": a + b,
         "executed_by": "celery-worker",
     }
+
+
+logger = logging.getLogger(__name__)
+
+# A lease limits duplicate runs even if the previous job has not finished.
+# The hard task limit (3 hours) must remain shorter than this lease (4 hours).
+_UNLOCK_IF_OWNER = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
+
+def _market_limit() -> int | None:
+    value = os.getenv("MARKET_LIMIT_TYPES", "20").strip()
+    if not value:
+        return None  # Empty means all catalog machine types: may be expensive for GCP.
+    limit = int(value)
+    if limit <= 0:
+        raise ValueError("MARKET_LIMIT_TYPES must be positive or empty")
+    return limit
+
+
+def _csv_env(name: str, default: str) -> list[str]:
+    return [
+        item.strip() for item in os.getenv(name, default).split(",") if item.strip()
+    ]
+
+
+@celery_app.task(name="spulti.market.collect", time_limit=10800)
+def collect_market_data(provider: str, dataset: str) -> dict:
+    """Collect either prices (hourly) or risks (daily), with an overlap guard."""
+    provider = provider.upper()
+    dataset = dataset.lower()
+    if provider not in {"AWS", "GCP"} or dataset not in {"prices", "risks"}:
+        raise ValueError(f"Invalid market collection request: {provider}/{dataset}")
+
+    from app.services.market_data_collector import collect_aws, collect_gcp
+
+    lock_key = f"spulti:market:lock:{provider.lower()}:{dataset}"
+    token = uuid4().hex
+    redis = Redis.from_url(os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0"))
+    try:
+        if not redis.set(lock_key, token, nx=True, ex=14400):
+            logger.warning(
+                "Market collection already running: %s/%s", provider, dataset
+            )
+            return {"status": "skipped", "provider": provider, "dataset": dataset}
+        try:
+            limit = _market_limit()
+            if provider == "AWS":
+                regions = _csv_env("MARKET_AWS_REGIONS", "us-east-1")
+                if not regions:
+                    raise ValueError("MARKET_AWS_REGIONS cannot be empty")
+                result = collect_aws(
+                    regions,
+                    limit_types=limit,
+                    include_price=(dataset == "prices"),
+                    include_risk=(dataset == "risks"),
+                )
+                failed = result["regions_failed"]
+                processed = result["regions_ok"]
+            else:
+                project = os.getenv("MARKET_GCP_PROJECT_ID", "spulti-cloud").strip()
+                region = os.getenv("MARKET_GCP_REGION", "asia-southeast1").strip()
+                if not project or not region:
+                    raise ValueError("GCP project and region must be specified")
+                if dataset == "prices":
+                    locations = [(region, None)]
+                else:
+                    zones = _csv_env("MARKET_GCP_ZONES", "asia-southeast1-b")
+                    if not zones:
+                        raise ValueError("MARKET_GCP_ZONES cannot be empty")
+                    if any(not zone.startswith(f"{region}-") for zone in zones):
+                        raise ValueError("GCP zone does not match MARKET_GCP_REGION")
+                    locations = [(region, zone) for zone in zones]
+                result = collect_gcp(
+                    project,
+                    locations,
+                    limit_types=limit,
+                    include_price=(dataset == "prices"),
+                    include_risk=(dataset == "risks"),
+                )
+                failed = result["locations_failed"]
+                processed = result["locations_ok"]
+
+            if failed:
+                raise RuntimeError(
+                    f"Market collection {provider}/{dataset} "
+                    f"had {failed} failed locations: {result}"
+                )
+            if not processed:
+                logger.warning(
+                    "Market collection found no work: %s/%s", provider, dataset
+                )
+                return {
+                    "status": "empty",
+                    "provider": provider,
+                    "dataset": dataset,
+                    **result,
+                }
+            logger.info(
+                "Market collection finished: %s/%s: %s", provider, dataset, result
+            )
+            return {"status": "ok", "provider": provider, "dataset": dataset, **result}
+        finally:
+            # Only the owner may release the lock;
+            # expired leases cannot delete new locks.
+            redis.eval(_UNLOCK_IF_OWNER, 1, lock_key, token)
+    finally:
+        redis.close()
