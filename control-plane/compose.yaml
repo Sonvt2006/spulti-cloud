@@ -7,6 +7,8 @@ x-app: &app
     # Đặt trong .env (xem .env.example).
     DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
     JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    SPULTI_LAUNCH_CONFIG: ${SPULTI_LAUNCH_CONFIG:-[]}
+    SPULTI_MAX_MACHINES_PER_USER: ${SPULTI_MAX_MACHINES_PER_USER:-5}
   restart: unless-stopped
   logging:
     driver: json-file
@@ -87,6 +89,13 @@ services:
       redis:
         condition: service_healthy
     stop_grace_period: 60s
+
+  beat:
+    <<: *app
+    command: ["celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule"]
+    depends_on:
+      redis:
+        condition: service_healthy
 
   nginx:
     image: nginx:stable-alpine

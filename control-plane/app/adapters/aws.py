@@ -113,6 +113,21 @@ class AWSAdapter(CloudAdapter):
     def delete_instance(self, instance_ref: str) -> None:
         self.ec2.terminate_instances(InstanceIds=[instance_ref])
 
+    def find_instance(self, spec: CreateInstanceSpec) -> InstanceInfo | None:
+        response = self.ec2.describe_instances(
+            Filters=[{"Name": "client-token", "Values": [spec.request_id]}]
+        )
+        instances = [
+            instance
+            for reservation in response["Reservations"]
+            for instance in reservation["Instances"]
+        ]
+        if len(instances) > 1:
+            raise ValueError(
+                "Nhiều instance có cùng ClientToken; cần kiểm tra thủ công"
+            )
+        return self._to_info(instances[0]) if instances else None
+
     @staticmethod
     def available_regions() -> list[str]:
         """AWS regions enabled for this account."""

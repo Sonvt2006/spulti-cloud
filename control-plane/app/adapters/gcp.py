@@ -3,6 +3,12 @@ from app.adapters.base import (
     CreateInstanceSpec,
     InstanceInfo,
 )
+from app.services.cloud_errors import (
+    CapacityUnavailableError,
+    CreateRejectedError,
+    InstanceIdentityError,
+)
+from google.api_core.exceptions import BadRequest, Forbidden, NotFound, Unauthorized
 from google.cloud import compute_v1
 
 
@@ -101,6 +107,7 @@ class GCPAdapter(CloudAdapter):
             ),
             labels={
                 "spulti-machine-id": str(spec.machine_id),
+                "spulti-request-id": spec.request_id,
             },
         )
 
@@ -128,17 +135,46 @@ class GCPAdapter(CloudAdapter):
         elif spec.gpu_type:
             raise ValueError("Có gpu_type nhưng gpu_count bằng 0")
 
-        operation = self.client.insert(
-            request=compute_v1.InsertInstanceRequest(
-                project=self.project_id,
-                zone=self.zone,
-                instance_resource=instance,
-                request_id=spec.request_id,
+        try:
+            operation = self.client.insert(
+                request=compute_v1.InsertInstanceRequest(
+                    project=self.project_id,
+                    zone=self.zone,
+                    instance_resource=instance,
+                    request_id=spec.request_id,
+                )
             )
-        )
+        except (BadRequest, Forbidden, Unauthorized) as exc:
+            raise CreateRejectedError("GCP từ chối yêu cầu tạo VM") from exc
 
-        operation.result(timeout=300)
+        try:
+            operation.result(timeout=300)
+        except Exception as exc:
+            # ExtendedOperation forwards Compute Operation fields via __getattr__.
+            errors = getattr(operation, "error", None)
+            codes = {item.code for item in errors.errors} if errors else set()
+            if codes & {
+                "ZONE_RESOURCE_POOL_EXHAUSTED",
+                "ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS",
+                "QUOTA_EXCEEDED",
+            }:
+                raise CapacityUnavailableError("GCP không còn capacity/quota") from exc
+            raise
         return self.get_instance(spec.name)
+
+    def find_instance(self, spec: CreateInstanceSpec) -> InstanceInfo | None:
+        try:
+            instance = self.client.get(
+                project=self.project_id, zone=self.zone, instance=spec.name
+            )
+        except NotFound:
+            return None
+        if (
+            instance.labels.get("spulti-machine-id") != str(spec.machine_id)
+            or instance.labels.get("spulti-request-id") != spec.request_id
+        ):
+            raise InstanceIdentityError("VM trùng tên nhưng khác yêu cầu tạo")
+        return self._to_info(instance)
 
     def get_instance(self, instance_ref: str) -> InstanceInfo:
         instance = self.client.get(

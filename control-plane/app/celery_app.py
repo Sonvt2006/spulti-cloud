@@ -23,4 +23,10 @@ celery_app.conf.update(
     result_expires=3600,
     broker_connection_retry_on_startup=True,
     worker_prefetch_multiplier=1,
+    beat_schedule={
+        "reconcile-machines": {
+            "task": "spulti.reconcile_machines",
+            "schedule": 15.0,
+        }
+    },
 )

@@ -119,6 +119,10 @@ class CloudAdapter(ABC):
     def get_instance(self, instance_ref: str) -> InstanceInfo:
         raise NotImplementedError("This method should be implemented by subclasses.")
 
+    def find_instance(self, spec: CreateInstanceSpec) -> InstanceInfo | None:
+        """Find the result of a possibly timed-out create without creating anything."""
+        raise NotImplementedError
+
     @staticmethod
     @abstractmethod
     def available_regions(*args, **kwargs) -> list[str]:
