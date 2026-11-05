@@ -1,6 +1,7 @@
 from decimal import Decimal
 from uuid import UUID
 
+from app.agent_api import router as agent_router
 from app.api_keys import router as api_keys_router
 from app.auth import CurrentUser
 from app.auth import router as auth_router
@@ -21,6 +22,7 @@ app.include_router(auth_router)
 app.include_router(api_keys_router)
 app.include_router(ssh_keys_router)
 app.include_router(placement_router)
+app.include_router(agent_router)
 
 
 class DemoTaskRequest(BaseModel):
