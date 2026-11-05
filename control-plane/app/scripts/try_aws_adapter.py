@@ -10,7 +10,9 @@ from app.adapters.base import CreateInstanceSpec
 from app.database import SessionLocal
 from app.services.instance_manager import build_instance_spec
 
-STATE_FILE = Path("/var/lib/spulti-tests/aws-adapter-test.json")
+BOOTSTRAP_FILE = Path(__file__).resolve().with_name("bootstrap_node_agent.sh")
+
+STATE_FILE = Path("/var/lib/spulti-tests/aws-agent-bootstrap-v1.json")
 
 
 def save_state(state: dict) -> None:
@@ -42,21 +44,18 @@ def new_state(user_id: int) -> dict:
             machine_id=0,  # Đọc key từ DB, không ghi Machine/Instance thử nghiệm.
             name=f"spulti-test-{request_id[:8]}",
             machine_type="t3.small",
-            image_id="ami-033ea4ff4a9c726dc",  # Ubuntu Server 22.04 LTS
-            zone="us-east-1c",
+            image_id=required_env("SPULTI_TEST_AMI_ID"),
+            zone=required_env("SPULTI_TEST_ZONE"),
             request_id=request_id,
             disk_size_gb=10,
-            startup_script=(
-                "#!/bin/bash\n"
-                "mkdir -p /workspace\n"
-                "echo 'AWS adapter test OK' > /workspace/test.txt\n"
-            ),
+            startup_script=BOOTSTRAP_FILE.read_text(encoding="utf-8"),
         )
 
     return {
         "region": "us-east-1",
-        "subnet_id": "subnet-0ceb087f813c4bf6c",
-        "security_group_ids": ["sg-018c6610dc3cbedbe"],
+        "subnet_id": required_env("SPULTI_TEST_SUBNET_ID"),
+        "security_group_ids": [required_env("SPULTI_TEST_SECURITY_GROUP_ID")],
+        "instance_profile_name": required_env("SPULTI_TEST_INSTANCE_PROFILE"),
         "user_id": user_id,
         "spec": asdict(spec),
         "instance_id": None,
@@ -68,6 +67,7 @@ def make_adapter(state: dict) -> AWSAdapter:
         region=state["region"],
         subnet_id=state["subnet_id"],
         security_group_ids=state["security_group_ids"],
+        instance_profile_name=state["instance_profile_name"],
     )
 
 

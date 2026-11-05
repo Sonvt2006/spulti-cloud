@@ -16,11 +16,13 @@ class AWSAdapter(CloudAdapter):
         region: str,
         subnet_id: str,
         security_group_ids: list[str],
+        instance_profile_name: str | None = None,
     ):
         # boto3 tự tìm credentials từ môi trường hoặc IAM role.
         self.ec2 = boto3.client("ec2", region_name=region)
         self.subnet_id = subnet_id
         self.security_group_ids = security_group_ids
+        self.instance_profile_name = instance_profile_name
 
     @staticmethod
     def _to_info(instance: dict) -> InstanceInfo:
@@ -49,7 +51,12 @@ class AWSAdapter(CloudAdapter):
         if image["RootDeviceType"] != "ebs":
             raise ValueError("Mẫu này chỉ hỗ trợ AMI có EBS root disk")
 
+        extra_options = {}
+        if self.instance_profile_name:
+            extra_options["IamInstanceProfile"] = {"Name": self.instance_profile_name}
+
         response = self.ec2.run_instances(
+            **extra_options,
             ImageId=spec.image_id,
             InstanceType=spec.machine_type,
             MinCount=1,
