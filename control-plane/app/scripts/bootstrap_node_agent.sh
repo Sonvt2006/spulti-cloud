@@ -42,3 +42,56 @@ python3 /opt/spulti-agent/agent.py --help
 
 touch /opt/spulti-agent/INSTALL_OK
 echo "BOOTSTRAP: Node Agent installation completed"
+
+# Tạo user riêng cho Agent.
+if ! id spulti-agent >/dev/null 2>&1; then
+    useradd --system \
+        --home-dir /var/lib/spulti-agent \
+        --shell /usr/sbin/nologin \
+        spulti-agent
+fi
+
+install -d \
+    -o spulti-agent \
+    -g spulti-agent \
+    -m 700 \
+    /var/lib/spulti-agent
+
+cat > /etc/systemd/system/spulti-node-agent.service <<'UNIT'
+[Unit]
+Description=Spulti Node Agent
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/spulti-agent.env
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=spulti-agent
+Group=spulti-agent
+WorkingDirectory=/opt/spulti-agent
+EnvironmentFile=/etc/spulti-agent.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/spulti-agent/agent.py --job-id ${SPULTI_JOB_ID} --total-steps ${SPULTI_TOTAL_STEPS} --checkpoint-every ${SPULTI_CHECKPOINT_EVERY} --heartbeat-every ${SPULTI_HEARTBEAT_EVERY} --step-delay 1 --state-dir /var/lib/spulti-agent
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/spulti-agent
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable spulti-node-agent
+
+# Chỉ chạy khi cấu hình job đã được cấp.
+if test -s /etc/spulti-agent.env; then
+    systemctl start spulti-node-agent
+else
+    echo "BOOTSTRAP: service installed; waiting for job configuration"
+fi
