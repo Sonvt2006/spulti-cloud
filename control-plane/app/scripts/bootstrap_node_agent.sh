@@ -18,8 +18,8 @@ from pathlib import Path
 import boto3
 
 bucket = "spulti-checkpoints"
-key = "agent/releases/v1/node-agent-v1.tar.gz"
-expected = "445945fba8a4f477b9dd004d0faa398bcff543ada81735533d2ba8878513dc47"
+key = "agent/releases/v2/node-agent-v2.tar.gz"
+expected = "8dd3f6e4ab779334e6c0185584f12505ccf8ccb8518c8ff316ba726dfacd2aaf"
 
 with tempfile.TemporaryDirectory() as directory:
     archive_path = Path(directory) / "agent.tar.gz"
