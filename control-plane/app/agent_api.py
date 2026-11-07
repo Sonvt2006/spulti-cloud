@@ -16,8 +16,10 @@ from typing import Annotated, Literal
 from uuid import uuid4
 
 from app.auth import CurrentUser
+from app.checkpoint_storage import S3CheckpointStore
 from app.database import get_db
 from app.models import AgentJob
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -114,12 +116,32 @@ def agent_job_config(
 
 @router.get("/jobs/{job_id}/checkpoint")
 def download_checkpoint(
-    job_id: str, db: Db, x_agent_token: Annotated[str | None, Header()] = None
+    job_id: str,
+    db: Db,
+    x_agent_token: Annotated[str | None, Header()] = None,
 ) -> dict:
     job = _job_for_agent(db, job_id, x_agent_token)
+
     if job.checkpoint_data is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "No checkpoint yet")
-    return job.checkpoint_data
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "No checkpoint yet",
+        )
+
+    reference = job.checkpoint_data
+
+    # Giữ khả năng đọc checkpoint cũ trong RDS.
+    # Những checkpoint mới sẽ được lưu trên S3.
+    if reference.get("storage") != "s3":
+        return reference
+
+    try:
+        return S3CheckpointStore().load(reference)
+    except (BotoCoreError, ClientError, RuntimeError, ValueError):
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Checkpoint storage unavailable",
+        ) from None
 
 
 @router.put("/jobs/{job_id}/checkpoint")
@@ -157,7 +179,16 @@ def upload_checkpoint(
         > MAX_CHECKPOINT_BYTES
     ):
         raise HTTPException(413, "Checkpoint too large")
-    job.checkpoint_data = data
+        # S3 phải lưu thành công trước khi cập nhật tiến độ trong RDS.
+    try:
+        reference = S3CheckpointStore().save(data)
+    except (BotoCoreError, ClientError, RuntimeError):
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Checkpoint storage unavailable",
+        ) from None
+
+    job.checkpoint_data = reference
     job.checkpoint_step = step
     job.current_step = max(job.current_step, step)
     job.status = payload.status

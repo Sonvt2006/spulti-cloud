@@ -6,6 +6,8 @@ x-app: &app
     CELERY_RESULT_BACKEND: redis://redis:6379/1
     # Đặt trong .env (xem .env.example).
     DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+    SPULTI_CHECKPOINT_BUCKET: ${SPULTI_CHECKPOINT_BUCKET:-}
+    AWS_REGION: ${AWS_REGION:-us-east-1}
     JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
     MARKET_AWS_REGIONS: ${MARKET_AWS_REGIONS:-us-east-1}
     MARKET_GCP_PROJECT_ID: ${MARKET_GCP_PROJECT_ID:-spulti-cloud}
