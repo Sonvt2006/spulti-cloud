@@ -145,7 +145,7 @@ def build_gcp_agent_startup_script(
     bucket: str,
     key: str,
     sha256: str,
-    region: str = "us-east-1",
+    region: str = "ap-southeast-1",
     expires_in: int = 3600,
 ) -> str:
     """Call immediately before creating a new VM.
