@@ -345,3 +345,34 @@ class AgentJob(Base):
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AgentInterruption(Base):
+    """Immutable agent reports, stored independently of checkpoint object storage."""
+
+    __tablename__ = "agent_interruptions"
+
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    report: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False
+    )
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+class AgentProgram(Base):
+    """Immutable source and runtime options for a job submitted from an SSH shell."""
+
+    __tablename__ = "agent_programs"
+
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_jobs.id", ondelete="CASCADE"), primary_key=True
+    )
+    filename: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_code: Mapped[str] = mapped_column(Text, nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    step_delay: Mapped[Decimal] = mapped_column(Numeric(8, 3), nullable=False)

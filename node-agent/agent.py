@@ -9,8 +9,13 @@ from job_runner import run_job
 
 
 def main(argv: list[str] | None = None) -> int:
-    config = parse_args(argv)
+    argv = sys.argv[1:] if argv is None else argv
     try:
+        if argv and argv[0] in {"submit", "resume"}:
+            from submission import main as submission_main
+
+            return submission_main(argv)
+        config = parse_args(argv)
         return run_job(config)
     except (ValueError, OSError, RuntimeError) as exc:
         print(f"[agent] ERROR: {exc}", file=sys.stderr, flush=True)

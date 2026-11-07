@@ -53,6 +53,9 @@ class NodeAgentRecoveryTests(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual(self.read_checkpoint()["status"], "COMPLETED")
         self.assertEqual(self.read_checkpoint()["last_completed_step"], 100)
+        self.assertEqual(
+            self.read_checkpoint()["workload_state"]["running_sum"], 338350
+        )
         second = self.run_agent()
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertIn("already COMPLETED", second.stdout)
@@ -62,10 +65,17 @@ class NodeAgentRecoveryTests(unittest.TestCase):
         self.assertEqual(crash.returncode, 75, crash.stdout + crash.stderr)
         self.assertEqual(self.read_checkpoint()["last_completed_step"], 30)
         self.assertEqual(self.read_checkpoint()["status"], "RUNNING")
+        self.assertEqual(self.read_checkpoint()["workload_state"]["running_sum"], 9455)
         recovery = self.run_agent()
         self.assertEqual(recovery.returncode, 0, recovery.stderr)
         self.assertIn("RESUME_FROM=30 NEXT_STEP=31", recovery.stdout)
+        self.assertIn("TOTAL=100 SUM=9455", recovery.stdout)
+        self.assertIn("STEP=31 SQUARE=961 SUM=10416", recovery.stdout)
+        self.assertNotIn("STEP=1 SQUARE=", recovery.stdout)
         self.assertEqual(self.read_checkpoint()["last_completed_step"], 100)
+        self.assertEqual(
+            self.read_checkpoint()["workload_state"]["running_sum"], 338350
+        )
         self.assertEqual(self.read_heartbeat()["status"], "COMPLETED")
         self.assertEqual(self.read_heartbeat()["last_checkpoint_step"], 100)
 
@@ -100,6 +110,34 @@ class NodeAgentRecoveryTests(unittest.TestCase):
         response = self.run_agent()
         self.assertEqual(response.returncode, 2)
         self.assertEqual(path.read_text(), "{bad-json")
+
+    def test_missing_or_inconsistent_result_is_rejected_without_overwrite(self):
+        self.assertEqual(self.run_agent("--simulate-crash-at", "37").returncode, 75)
+        original = self.read_checkpoint()
+        path = self.state / "checkpoints" / "test-job.json"
+        for state in (None, {}, {"running_sum": 0}, {"running_sum": True}):
+            with self.subTest(state=state):
+                damaged = {**original, "workload_state": state}
+                path.write_text(json.dumps(damaged))
+                result = self.run_agent()
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(self.read_checkpoint(), damaged)
+
+    def test_legacy_counter_checkpoint_needs_new_job(self):
+        path = self.state / "checkpoints" / "test-job.json"
+        path.parent.mkdir(parents=True)
+        legacy = {
+            "version": 1,
+            "job_id": "test-job",
+            "total_steps": 100,
+            "last_completed_step": 30,
+            "status": "RUNNING",
+        }
+        path.write_text(json.dumps(legacy))
+        result = self.run_agent()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("version 2", result.stderr)
+        self.assertEqual(self.read_checkpoint(), legacy)
 
 
 if __name__ == "__main__":

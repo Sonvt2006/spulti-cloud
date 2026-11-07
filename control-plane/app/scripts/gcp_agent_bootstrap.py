@@ -91,6 +91,13 @@ PY
         > /opt/spulti-agent/INSTALL_OK
 fi
 
+cat > /usr/local/bin/spulti-agent <<'CLI'
+#!/bin/sh
+export SPULTI_CLOUD_PROVIDER="${SPULTI_CLOUD_PROVIDER:-gcp}"
+exec /usr/bin/python3 /opt/spulti-agent/agent.py "$@"
+CLI
+chmod 0755 /usr/local/bin/spulti-agent
+
 cat > /etc/systemd/system/spulti-node-agent.service <<'UNIT'
 [Unit]
 Description=Spulti Node Agent
@@ -106,14 +113,16 @@ Group=spulti-agent
 WorkingDirectory=/opt/spulti-agent
 EnvironmentFile=/etc/spulti-agent.env
 Environment=PYTHONUNBUFFERED=1
+Environment=SPULTI_CLOUD_PROVIDER=gcp
 ExecStart=/usr/bin/python3 /opt/spulti-agent/agent.py \
     --job-id ${SPULTI_JOB_ID} \
     --total-steps ${SPULTI_TOTAL_STEPS} \
     --checkpoint-every ${SPULTI_CHECKPOINT_EVERY} \
     --heartbeat-every ${SPULTI_HEARTBEAT_EVERY} \
-    --step-delay 1 \
+    --step-delay 5 \
     --state-dir /var/lib/spulti-agent
 RestartSec=10
+RestartPreventExitStatus=130
 TimeoutStopSec=60
 NoNewPrivileges=true
 ProtectSystem=strict

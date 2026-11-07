@@ -2,6 +2,10 @@
 
 > Tài liệu mô tả kiến trúc, nhiệm vụ từng file và cách chạy thử **Node Agent kết nối Control Plane** trong dự án Spulti-cloud. Control Plane và Node Agent là hai chương trình độc lập, được đặt ở hai thư mục ngang cấp trong cùng repository.
 
+> **Phát hiện thu hồi AWS/GCP:** xem [INTERRUPTION.md](INTERRUPTION.md) để bật metadata polling, cấu hình service, tạo bảng báo cáo và kiểm thử. Tính năng lưu cuối/báo cáo đã có; tự tạo VM thay thế vẫn là task riêng.
+
+> **Gửi file Python sau khi SSH:** [SSH_JOBS.md](SSH_JOBS.md) mô tả `submit FILE.py --total-steps 100` để chạy toàn bộ file 100 lượt, kiểm tra cú pháp trước khi chạy và dừng khi có lỗi. Dùng `spulti.state` để lưu kết quả tùy ý; `resume JOB_ID` khôi phục code, bước và trạng thái trên VM mới. Các ví dụ tổng bình phương bên dưới là demo tích hợp, dùng checkpoint version 2; script gửi lên dùng version 3.
+
 Node Agent chịu trách nhiệm chạy workload trên máy thực thi (Spot VM AWS/GCP khi triển khai thực tế), gửi heartbeat về Control Plane và lưu checkpoint để có thể tiếp tục tác vụ sau khi tiến trình hoặc VM bị dừng. Control Plane cung cấp FastAPI để tạo job, tiếp nhận trạng thái và lưu checkpoint JSON vào PostgreSQL (local hoặc RDS).
 
 ---
@@ -52,7 +56,7 @@ Khi VM/tiến trình bị dừng:
 5. Nếu tiến trình bị dừng, Agent khác có thể dùng cùng `job_id` và token để tải checkpoint từ Control Plane, rồi tiếp tục từ bước đã lưu.
 6. Khi job hoàn thành, Agent gửi checkpoint cuối và trạng thái `COMPLETED`.
 
-**Phạm vi demo:** Workload hiện tại là vòng lặp đếm bước. Việc chạy trên một thư mục state mới mô phỏng VM thay thế, **không đồng nghĩa Control Plane đã có chức năng tự provision Spot VM**.
+**Phạm vi demo:** Workload hiện tại tính tổng bình phương, chờ mặc định 5 giây/bước và lưu cả bước lẫn tổng. Xem [README.md](README.md) để thử dừng/khôi phục. Việc chạy trên một thư mục state mới mô phỏng VM thay thế, **không đồng nghĩa Control Plane đã có chức năng tự provision Spot VM**.
 
 ---
 
@@ -119,7 +123,8 @@ File gọi `parse_args()` trong `config.py` để đọc cấu hình, sau đó g
 |---|---|
 | `--job-id` | ID của job; khi kết nối API lấy từ Control Plane |
 | `--total-steps` | Tổng số bước của workload demo |
-| `--checkpoint-every` | Lưu checkpoint sau mỗi N bước |
+| `--checkpoint-every` | N > 0 bật thêm lưu sau mỗi N bước; 0 chỉ tắt điều kiện theo bước |
+| `--checkpoint-seconds` | Chu kỳ thời gian, mặc định 10 giây; lưu bước hoàn thành và kết quả gần nhất |
 | `--heartbeat-every` | Gửi heartbeat sau mỗi N bước |
 | `--step-delay` | Thời gian chờ mỗi bước, tính bằng giây |
 | `--state-dir` | Thư mục lưu checkpoint và heartbeat local |
@@ -156,16 +161,18 @@ Ví dụ một checkpoint của job demo:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "job_id": "demo-job-001",
   "total_steps": 100,
   "last_completed_step": 30,
   "status": "RUNNING",
-  "updated_at": "2026-11-01T10:00:00+00:00"
+  "updated_at": "2026-11-07T10:00:00+00:00",
+  "workload": "sum_of_squares",
+  "workload_state": {"running_sum": 9455}
 }
 ```
 
-Giá trị `last_completed_step` cho biết bước cuối **đã được lưu**, không nhất thiết bằng bước vừa thực thi tại thời điểm VM bị dừng.
+Giá trị `last_completed_step` cho biết bước cuối **đã được lưu**, không nhất thiết bằng bước vừa thực thi tại thời điểm VM bị dừng. `workload_state.running_sum` là tổng ở bước đó; khôi phục ví dụ trên sẽ nạp tổng 9455 rồi tính bước 31 thành 10416. Agent mới từ chối checkpoint version 1 không có kết quả.
 
 ### 3.5. `heartbeat.py` — Ghi trạng thái local
 
@@ -483,4 +490,4 @@ python3 agent.py \
 | `Job config mismatch` | `total_steps` hoặc chu kỳ checkpoint/heartbeat khác cấu hình job |
 | `HTTPS` error | Agent không được gửi token qua HTTP đến máy từ xa; dùng HTTPS |
 
-**Giới hạn của phiên bản hiện tại:** Checkpoint mới là JSON cho job đếm bước, không phải snapshot bộ nhớ hay model AI lớn. Hệ thống chưa tự phát hiện heartbeat quá hạn để tạo máy thay thế, chưa tích hợp đầy đủ quy trình bootstrap Agent và chưa lưu checkpoint lớn lên S3/GCS. Những chức năng này thuộc giai đoạn triển khai tiếp theo của Spulti-cloud.
+**Giới hạn của phiên bản hiện tại:** Checkpoint là JSON cho job tính tổng bình phương, không phải snapshot bộ nhớ hay model AI lớn. Hệ thống chưa tự phát hiện heartbeat quá hạn để tạo máy thay thế, chưa tích hợp đầy đủ quy trình bootstrap Agent và chưa lưu checkpoint lớn lên S3/GCS. Những chức năng này thuộc giai đoạn triển khai tiếp theo của Spulti-cloud.

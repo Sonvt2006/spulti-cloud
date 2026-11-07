@@ -43,6 +43,14 @@ python3 /opt/spulti-agent/agent.py --help
 touch /opt/spulti-agent/INSTALL_OK
 echo "BOOTSTRAP: Node Agent installation completed"
 
+# Interactive submission runs as the SSH user, with that user's Spulti API key.
+cat > /usr/local/bin/spulti-agent <<'CLI'
+#!/bin/sh
+export SPULTI_CLOUD_PROVIDER="${SPULTI_CLOUD_PROVIDER:-aws}"
+exec /usr/bin/python3 /opt/spulti-agent/agent.py "$@"
+CLI
+chmod 0755 /usr/local/bin/spulti-agent
+
 # Tạo user riêng cho Agent.
 if ! id spulti-agent >/dev/null 2>&1; then
     useradd --system \
@@ -72,8 +80,10 @@ Group=spulti-agent
 WorkingDirectory=/opt/spulti-agent
 EnvironmentFile=/etc/spulti-agent.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/usr/bin/python3 /opt/spulti-agent/agent.py --job-id ${SPULTI_JOB_ID} --total-steps ${SPULTI_TOTAL_STEPS} --checkpoint-every ${SPULTI_CHECKPOINT_EVERY} --heartbeat-every ${SPULTI_HEARTBEAT_EVERY} --step-delay 1 --state-dir /var/lib/spulti-agent
+Environment=SPULTI_CLOUD_PROVIDER=aws
+ExecStart=/usr/bin/python3 /opt/spulti-agent/agent.py --job-id ${SPULTI_JOB_ID} --total-steps ${SPULTI_TOTAL_STEPS} --checkpoint-every ${SPULTI_CHECKPOINT_EVERY} --heartbeat-every ${SPULTI_HEARTBEAT_EVERY} --step-delay 5 --state-dir /var/lib/spulti-agent
 Restart=on-failure
+RestartPreventExitStatus=130
 RestartSec=10
 TimeoutStopSec=60
 NoNewPrivileges=true

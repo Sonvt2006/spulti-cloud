@@ -1,4 +1,4 @@
-"""Local status/heartbeat marker (remote Control Plane heartbeat is a later task)."""
+"""Local status marker; job_runner also sends status to the Control Plane."""
 
 from __future__ import annotations
 

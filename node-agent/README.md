@@ -1,6 +1,8 @@
-# Spulti-cloud Node Agent — MVP 1 (local checkpoint/resume)
+# Spulti-cloud Node Agent — checkpoint/resume và phát hiện thu hồi
 
-> **Mục tiêu của phần này:** Chạy một job giả lập, ghi heartbeat ra file, lưu checkpoint định kỳ, mô phỏng mất máy đột ngột và tiếp tục công việc từ checkpoint. **Chưa** gọi Control Plane, chưa upload lên S3/GCS, chưa chạy job thật, chưa tự phát hiện AWS/GCP interruption.
+**Chạy file Python sau khi SSH:** xem [SSH_JOBS.md](SSH_JOBS.md). Dùng `spulti-agent submit hello.py --total-steps 100` để kiểm tra cú pháp, tự đăng ký job và chạy toàn bộ file 100 lượt. File lỗi bị dừng và báo lỗi. Code cần khôi phục kết quả dùng `spulti.state`; `spulti-agent resume JOB_ID` tải lại code/checkpoint. Các lệnh bên dưới chạy workload demo tổng bình phương có sẵn.
+
+> Tính tổng bình phương `1² + 2² + ... + N²`, mặc định chờ 5 giây trước mỗi bước. Lưu checkpoint mỗi 10 giây và khi dừng bằng Ctrl+C/SIGTERM, nhận cảnh báo thu hồi hoặc hoàn thành job. Checkpoint lưu bước đã hoàn thành gần nhất và tổng tại bước đó. Agent hỗ trợ local/Control Plane và [phát hiện thu hồi AWS/GCP](INTERRUPTION.md).
 >
 > Độc lập với Docker, RDS, Redis, Celery và cloud credentials. Không tạo VM và không phát sinh chi phí AWS/GCP.
 
@@ -15,6 +17,8 @@ spulti-cloud/
     ├── checkpoint.py
     ├── heartbeat.py
     ├── job_runner.py
+    ├── control_plane.py
+    ├── interruption.py
     ├── tests/test_recovery.py
     └── README.md
 ```
@@ -24,33 +28,57 @@ Copy thư mục `node-agent/` vào **gốc repository**, ngang hàng với `cont
 ## 2. Chạy trên Windows PowerShell
 
 ```powershell
-cd "D:\2027 kì 1\Cloud compute\spulti-cloud\node-agent"
+cd D:\spulti-cloud\node-agent
 python --version
-python agent.py --job-id demo-001 --total-steps 1000 --checkpoint-every 100 --heartbeat-every 25 --step-delay 0.01
+..\.venv\Scripts\python.exe agent.py --job-id squares-demo --total-steps 10 --heartbeat-every 1
 ```
 
-Đợi chạy hết, kết quả có `CHECKPOINT step=100`, `HEARTBEAT ...`, `COMPLETED`.
+Sau mỗi 5 giây, log hiển thị bước, bình phương và tổng: `STEP=3 SQUARE=9 SUM=14`. Bước 10 có tổng `385`. Nhấn Ctrl+C rồi chạy lại cùng lệnh để nạp bước/tổng đã lưu và tiếp tục; job đã hoàn thành sẽ không chạy lại.
 
 Trên Ubuntu/Linux (hoặc VM) cú pháp tương tự:
 
 ```bash
 cd ~/spulti-cloud/node-agent
-python3 agent.py --job-id demo-001 --total-steps 1000 --checkpoint-every 100 --heartbeat-every 25 --step-delay 0.01
+python3 agent.py --job-id squares-demo --total-steps 10 --heartbeat-every 1
 ```
 
 Trên mỗi máy, dữ liệu được lưu ở:
 
 ```text
-node-agent/state/checkpoints/demo-001.json
-node-agent/state/heartbeats/demo-001.json
+node-agent/state/checkpoints/squares-demo.json
+node-agent/state/heartbeats/squares-demo.json
 ```
 
 - `last_completed_step`: bước **đã lưu bền vững** để khôi phục.
+- `workload_state.running_sum`: tổng bình phương ở chính bước đã lưu.
 - `current_step`: bước gần nhất Agent báo heartbeat; **có thể lớn hơn** checkpoint vì heartbeat không phải checkpoint.
 - `status`: `RUNNING`, `INTERRUPTED` hoặc `COMPLETED`.
 - `timestamp`/`updated_at`: UTC.
 
 Các file JSON được ghi bằng tệp tạm và `os.replace` để tránh checkpoint bị ghi dở.
+
+Ví dụ checkpoint khi dừng ở bước 3:
+
+```json
+{
+  "version": 2,
+  "job_id": "squares-demo",
+  "total_steps": 10,
+  "last_completed_step": 3,
+  "status": "INTERRUPTED",
+  "updated_at": "2026-11-07T10:00:00+00:00",
+  "workload": "sum_of_squares",
+  "workload_state": {"running_sum": 14}
+}
+```
+
+Khi khôi phục, agent nạp `step=3`, `running_sum=14`; sau 5 giây tính bước 4: `14 + 4² = 30`. Công thức tổng bình phương chỉ dùng để kiểm tra checkpoint có khớp bước hay không; vòng lặp thực sự cộng từng `step ** 2` vào tổng được nạp.
+
+Checkpoint đếm bước cũ (`version=1`) không chứa kết quả nên agent mới từ chối khôi phục và không ghi đè. Dùng job-id/thư mục state mới cho demo này; nếu kết nối API thì tạo job mới trên API. Cập nhật API trước agent để API nhận schema version 2. API vẫn nhận version 1 từ agent cũ. Thay đổi schema JSON này không yêu cầu thêm cột database.
+
+Mặc định `--checkpoint-seconds 10` lưu bước/kết quả gần nhất mỗi 10 giây, kể cả khi đang chờ delay hoặc chạy một lượt Python dài. `--checkpoint-every 0` chỉ tắt điều kiện theo số bước; N > 0 bật thêm lưu sau mỗi N bước. Dừng/kết thúc vẫn lưu thêm bản cuối. File checkpoint local của job được thay bằng bản mới. Chế độ remote đồng bộ từng snapshot lên Control Plane/S3; nếu VM mất đột ngột thì khôi phục từ bản đã upload thành công. Chu kỳ này không đảm bảo giới hạn mất công việc đúng 10 giây khi một bước dài hoặc mạng/API lỗi. Có thể đổi `--step-delay 0` để test nhanh.
+
+Khi dùng API, `total_steps`, `checkpoint_every`, `heartbeat_every` phải khớp job; job mới cũng mặc định `checkpoint_every=0`. Job cũ được tạo với chu kỳ khác cần tạo job mới có `checkpoint_every=0` nếu muốn dùng chế độ này. Với systemd, đặt `SPULTI_CHECKPOINT_EVERY=0` trong `/etc/spulti-agent.env` cho khớp job. Các ví dụ crash bên dưới cố ý bật lưu định kỳ mỗi 100 bước.
 
 ## 3. Test mất máy đột ngột và khôi phục
 
@@ -95,22 +123,24 @@ Hoặc Ubuntu:
 python3 -m unittest discover -s tests -v
 ```
 
-Bốn test kiểm tra: hoàn thành + không chạy lặp, crash và resume, từ chối checkpoint sai `total_steps`, và từ chối checkpoint hỏng (không âm thầm chạy lại từ đầu).
+Các test kiểm tra checkpoint/resume, metadata AWS/GCP, tín hiệu dừng, giới hạn thời gian xử lý, lỗi lưu/upload và báo cáo thu hồi. Tất cả dùng nguồn metadata giả lập, không tạo VM.
 
 ## 5. Những gì đã có / chưa có
 
 | Thành phần | Trạng thái |
 | --- | --- |
-| Job giả lập CPU counter | MVP hoàn thành |
+| Job tính tổng bình phương, delay 5 giây | Đã có; lưu/nạp bước và tổng |
 | Local checkpoint JSON, atomic write | MVP hoàn thành |
 | Resume sau khi tiến trình chết đột ngột | MVP hoàn thành |
 | Graceful SIGINT/SIGTERM checkpoint | MVP hoàn thành (POSIX; Windows Ctrl+C có thể dùng SIGINT) |
 | Local heartbeat JSON | MVP hoàn thành |
-| Heartbeat API lên Control Plane | Chưa làm |
-| Checkpoint bền vững trên S3/GCS | Chưa làm |
-| Tải checkpoint sang VM khác, tự động đổi VM | Chưa làm |
+| Heartbeat API lên Control Plane | Đã có khi cấu hình URL/token |
+| Checkpoint bền vững trên S3 | Control Plane nhận JSON và lưu S3 |
+| Phát hiện thu hồi AWS/GCP, lưu cuối và báo nền tảng | Đã có; xem `INTERRUPTION.md` |
+| Tải checkpoint từ Control Plane | Đã có |
+| Tự tạo VM thay thế và chạy lại Agent | Task riêng, chưa triển khai |
 | Lưu checkpoint cho **job thực tế** | Chưa làm; cần workload hỗ trợ snapshot hoặc API checkpoint riêng |
 
-**Giới hạn quan trọng:** Checkpoint đang nằm trên đĩa local của nơi chạy Agent; nếu VM Spot bị hủy, file này cũng có thể mất. Do đó chưa phải cơ chế recovery đa máy. Bước tiếp theo là upload/download checkpoints tới S3/GCS, rồi triển khai Agent và heartbeat API trên VM.
+**Giới hạn:** Khi chạy local không cấu hình URL/token, dữ liệu chỉ nằm trên đĩa VM. Khi kết nối API, chỉ checkpoint đã được nền tảng xác nhận mới được coi là đồng bộ. Với chế độ chỉ lưu lúc dừng/kết thúc, nếu tiến trình bị kill đột ngột hoặc VM mất trước khi kịp xử lý cảnh báo thì tiến độ từ lần lưu gần nhất chưa được ghi lại. Agent hiện chỉ chạy workload demo.
 
 **An toàn:** Không chạy **hai Agent cùng `job-id` và `state-dir` cùng lúc**; MVP chưa có distributed lock. File checkpoint của một job có `total_steps` cố định; đổi tổng bước sẽ báo lỗi để tránh ghi đè sai trạng thái.

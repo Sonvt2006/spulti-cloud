@@ -10,6 +10,7 @@ from app.database import get_db
 from app.placement import router as placement_router
 from app.services.catalog import find_machine_types
 from app.ssh_keys import router as ssh_keys_router
+from app.submissions import router as submission_router
 from app.tasks import demo_add
 from celery.result import AsyncResult
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -23,6 +24,7 @@ app.include_router(api_keys_router)
 app.include_router(ssh_keys_router)
 app.include_router(placement_router)
 app.include_router(agent_router)
+app.include_router(submission_router)
 
 
 class DemoTaskRequest(BaseModel):
