@@ -139,7 +139,7 @@ Các test kiểm tra checkpoint/resume, metadata AWS/GCP, tín hiệu dừng, gi
 | Phát hiện thu hồi AWS/GCP, lưu cuối và báo nền tảng | Đã có; xem `INTERRUPTION.md` |
 | Tải checkpoint từ Control Plane | Đã có |
 | Tự tạo VM thay thế và chạy lại Agent | Task riêng, chưa triển khai |
-| Lưu checkpoint cho **job thực tế** | Chưa làm; cần workload hỗ trợ snapshot hoặc API checkpoint riêng |
+| Lưu checkpoint cho **job thực tế** | Đã hỗ trợ script Python dùng spulti.state; chưa hỗ trợ tự động chụp toàn bộ tiến trình hoặc khôi phục giữa một lượt chạy |
 
 **Giới hạn:** Khi chạy local không cấu hình URL/token, dữ liệu chỉ nằm trên đĩa VM. Khi kết nối API, chỉ checkpoint đã được nền tảng xác nhận mới được coi là đồng bộ. Với chế độ chỉ lưu lúc dừng/kết thúc, nếu tiến trình bị kill đột ngột hoặc VM mất trước khi kịp xử lý cảnh báo thì tiến độ từ lần lưu gần nhất chưa được ghi lại. Agent hiện chỉ chạy workload demo.
 
