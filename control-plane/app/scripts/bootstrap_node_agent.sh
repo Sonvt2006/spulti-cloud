@@ -19,12 +19,12 @@ import boto3
 
 bucket = "spulti-checkpoints"
 key = "agent/releases/v1/node-agent-v1.tar.gz"
-expected = "a0b54fbf805344cbf4d9b24871b9991d4c18122a4a7b7ff9474869bb8126e651"
+expected = "445945fba8a4f477b9dd004d0faa398bcff543ada81735533d2ba8878513dc47"
 
 with tempfile.TemporaryDirectory() as directory:
     archive_path = Path(directory) / "agent.tar.gz"
 
-    boto3.client("s3", region_name="us-east-1").download_file(
+    boto3.client("s3", region_name="ap-southeast-1").download_file(
         bucket, key, str(archive_path)
     )
 
