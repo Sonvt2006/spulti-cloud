@@ -123,6 +123,7 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
     confirmed = 0  # Last checkpoint acknowledged by the API, not local disk.
     persisted = current
     next_checkpoint = time.monotonic() + config.checkpoint_seconds
+    next_heartbeat = time.monotonic() + 20.0
 
     def handle_stop(signum: int, _frame: object) -> None:
         stop.request(InterruptionNotice("signal", signal.Signals(signum).name.lower()))
@@ -141,7 +142,13 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
         next_checkpoint = time.monotonic() + config.checkpoint_seconds
 
     def checkpoint_if_due() -> None:
-        nonlocal next_checkpoint
+        nonlocal next_checkpoint, next_heartbeat
+        if not stop.event.is_set() and time.monotonic() >= next_heartbeat:
+            next_heartbeat = time.monotonic() + 20.0
+            try:
+                heartbeat_now(current, persisted, "RUNNING")
+            except (OSError, RetryableRemoteError):
+                print("[agent] Heartbeat unavailable; will retry", flush=True)
         if stop.event.is_set() or time.monotonic() < next_checkpoint:
             return
         next_checkpoint = time.monotonic() + config.checkpoint_seconds

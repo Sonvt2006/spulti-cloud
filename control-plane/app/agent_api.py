@@ -149,11 +149,15 @@ def _job_for_owner(db: Session, job_id: str, user_id: int) -> AgentJob:
     return job
 
 
-def _job_for_agent(db: Session, job_id: str, supplied_token: str | None) -> AgentJob:
+def _job_for_agent(
+    db: Session, job_id: str, supplied_token: str | None, *, lock: bool = False
+) -> AgentJob:
     # Uniform 401 even if job ID does not exist; no token is ever logged.
     if not supplied_token or not (32 <= len(supplied_token) <= 256):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid agent token")
-    job = db.get(AgentJob, job_id)
+    job = db.get(
+        AgentJob, job_id, with_for_update=True if lock else None, populate_existing=True
+    )
     candidate = hashlib.sha256(supplied_token.encode("utf-8")).hexdigest()
     if job is None or not hmac.compare_digest(candidate, job.agent_token_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid agent token")
@@ -212,7 +216,21 @@ def get_job(job_id: str, user: CurrentUser, db: Db) -> dict:
 def agent_job_config(
     job_id: str, db: Db, x_agent_token: Annotated[str | None, Header()] = None
 ) -> dict:
-    return _summary(_job_for_agent(db, job_id, x_agent_token))
+    job = _job_for_agent(db, job_id, x_agent_token)
+    program = db.get(AgentProgram, job_id)
+    return {
+        **_summary(job),
+        "program": (
+            {
+                "filename": program.filename,
+                "source_code": program.source_code,
+                "source_sha256": program.source_sha256,
+                "step_delay": float(program.step_delay),
+            }
+            if program
+            else None
+        ),
+    }
 
 
 @router.get("/jobs/{job_id}/checkpoint")
@@ -309,7 +327,7 @@ def post_heartbeat(
     db: Db,
     x_agent_token: Annotated[str | None, Header()] = None,
 ) -> dict:
-    job = _job_for_agent(db, job_id, x_agent_token)
+    job = _job_for_agent(db, job_id, x_agent_token, lock=True)
     if (
         payload.current_step > job.total_steps
         or payload.last_checkpoint_step > payload.current_step
@@ -337,7 +355,7 @@ def report_interruption(
     db: Db,
     x_agent_token: Annotated[str | None, Header()] = None,
 ) -> dict:
-    job = _job_for_agent(db, job_id, x_agent_token)
+    job = _job_for_agent(db, job_id, x_agent_token, lock=True)
     event_id = str(payload.event_id)
     data = payload.model_dump(mode="json")
 
@@ -371,6 +389,10 @@ def report_interruption(
     job = db.get(
         AgentJob, job_id, with_for_update={"key_share": True}, populate_existing=True
     )
+    if not hmac.compare_digest(
+        job.agent_token_hash, hashlib.sha256(x_agent_token.encode()).hexdigest()
+    ):
+        return {"status": "ack", "event_id": event_id}
     # Do not let a delayed report overwrite completion or newer progress.
     if job.status != "COMPLETED" and payload.current_step >= job.current_step:
         job.current_step = payload.current_step

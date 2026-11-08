@@ -15,6 +15,10 @@ def main(argv: list[str] | None = None) -> int:
             from submission import main as submission_main
 
             return submission_main(argv)
+        if argv and argv[0] == "managed":
+            from managed import main as managed_main
+
+            return managed_main(argv[1:])
         config = parse_args(argv)
         return run_job(config)
     except (ValueError, OSError, RuntimeError) as exc:

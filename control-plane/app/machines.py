@@ -5,7 +5,14 @@ from uuid import UUID, uuid4
 
 from app.auth import CurrentUser
 from app.database import get_db
-from app.models import Instance, InstanceAttempt, Machine, MachineLifecycle
+from app.models import (
+    Instance,
+    InstanceAttempt,
+    Machine,
+    MachineJob,
+    MachineLifecycle,
+    RecoveryRun,
+)
 from app.services.instance_manager import (
     MachineRequest,
     ManagerError,
@@ -60,6 +67,7 @@ class MachineResponse(BaseModel):
     checked_at: datetime | None = None
     instance: InstanceResponse | None = None
     ssh_username: str = "spulti"
+    job_id: str | None = None
 
 
 def _instance_view(instance: Instance, attempt: InstanceAttempt) -> InstanceResponse:
@@ -80,6 +88,8 @@ def _instance_view(instance: Instance, attempt: InstanceAttempt) -> InstanceResp
 
 def machine_response(db: Session, machine: Machine) -> MachineResponse:
     result = MachineResponse.model_validate(machine)
+    binding = db.get(MachineJob, machine.id)
+    result.job_id = binding.job_id if binding else None
     life = db.get(MachineLifecycle, machine.id)
     if life:
         result.request_key = life.request_key
@@ -194,3 +204,44 @@ def retry(machine_id: int, user: CurrentUser, db: DbSession) -> MachineResponse:
     db.commit()
     _wake_worker(machine_id)
     return result
+
+
+@router.get("/{machine_id}/events")
+def recovery_history(
+    machine_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[dict]:
+    try:
+        owned_machine(db, user.id, machine_id)
+    except ManagerError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    from app.services.recovery import utc
+
+    return [
+        {
+            "id": run.id,
+            "reason": run.reason,
+            "state": run.state,
+            "failed_attempt_id": run.failed_attempt_id,
+            "replacement_attempt_id": run.replacement_attempt_id,
+            "started_at": run.started_at,
+            "finished_at": run.finished_at,
+            "excluded_until": run.excluded_until,
+            "last_error": run.last_error,
+            "downtime_seconds": (
+                (utc(run.finished_at) - utc(run.started_at)).total_seconds()
+                if run.state == "SUCCEEDED"
+                else None
+            ),
+        }
+        for run in db.scalars(
+            select(RecoveryRun)
+            .where(RecoveryRun.machine_id == machine_id)
+            .order_by(RecoveryRun.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+    ]

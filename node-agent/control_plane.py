@@ -77,7 +77,9 @@ class ControlPlaneClient:
                 timeout = min(3.0, remaining)
             try:
                 with urlopen(request, timeout=timeout) as response:
-                    raw = response.read(32 * 1024)
+                    raw = response.read(128 * 1024 + 1)
+                    if len(raw) > 128 * 1024:
+                        raise RemoteError("Control Plane response too large")
                     return json.loads(raw.decode("utf-8"))
             except HTTPError as exc:
                 try:
@@ -105,6 +107,9 @@ class ControlPlaneClient:
         raise RetryableRemoteError(
             f"Control Plane unreachable after retries ({reason})"
         )
+
+    def get_config(self) -> dict:
+        return self._request("GET", "config")
 
     def verify_config(
         self, total_steps: int, checkpoint_every: int, heartbeat_every: int

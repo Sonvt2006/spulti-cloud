@@ -1,22 +1,26 @@
 """Persist launch intent first; reconcile one cloud operation per worker delivery."""
 
+import hashlib
 import logging
 import os
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.adapters.base import CreateInstanceSpec, InstanceInfo
 from app.adapters.cloud_init import build_aws_user_data
 from app.models import (
+    AgentJob,
     Instance,
     InstanceAttempt,
     Machine,
+    MachineJob,
     MachineLifecycle,
     SSHKey,
     User,
 )
+from app.services import recovery
 from app.services.cloud_errors import (
     InstanceIdentityError,
     is_capacity_error,
@@ -24,6 +28,7 @@ from app.services.cloud_errors import (
     is_not_found,
 )
 from app.services.launch_config import load_launch_profiles, make_adapter
+from app.services.managed_agent import agent_settings, attempt_token, startup_script
 from app.services.placement import PlacementRequest, rank_candidates
 from pydantic import Field, field_validator
 from sqlalchemy import func, select, update
@@ -39,6 +44,7 @@ class MachineRequest(PlacementRequest):
     name: str = Field(min_length=1, max_length=100)
     disk_size_gb: int = Field(default=30, ge=1, le=65536)
     startup_script: str = Field(default="", max_length=8000)
+    job_id: UUID | None = None
 
     @field_validator("name")
     @classmethod
@@ -108,7 +114,9 @@ def build_instance_spec(
     )
 
 
-def _prepare_attempts(db: Session, machine: Machine, payload: MachineRequest) -> None:
+def _prepare_attempts(
+    db: Session, machine: Machine, payload: MachineRequest, *, exclusions=None
+) -> None:
     try:
         profiles = load_launch_profiles()
     except ValueError as exc:
@@ -118,7 +126,7 @@ def _prepare_attempts(db: Session, machine: Machine, payload: MachineRequest) ->
     placement = PlacementRequest.model_validate(
         payload.model_dump(include=set(PlacementRequest.model_fields))
     )
-    candidates = rank_candidates(db, placement)
+    candidates = rank_candidates(db, placement, exclusions=exclusions)
     position = db.scalar(
         select(func.max(InstanceAttempt.position)).where(
             InstanceAttempt.machine_id == machine.id
@@ -152,7 +160,16 @@ def _prepare_attempts(db: Session, machine: Machine, payload: MachineRequest) ->
                 request_id=request_id,
                 disk_size_gb=payload.disk_size_gb,
                 # GPUs already included in the catalog machine type. No N1 add-ons.
-                startup_script=payload.startup_script,
+                startup_script=(
+                    startup_script(
+                        str(payload.job_id),
+                        request_id,
+                        candidate.provider,
+                        payload.startup_script,
+                    )
+                    if payload.job_id
+                    else payload.startup_script
+                ),
             )
             if candidate.provider == "AWS":
                 build_aws_user_data(spec)
@@ -215,6 +232,18 @@ def create_machine(
         raise ManagerError(409, f"Đã đạt hạn mức {limit} máy chưa xóa")
     if not db.scalar(select(SSHKey.id).where(SSHKey.user_id == user_id).limit(1)):
         raise ManagerError(422, "Hãy đăng ký SSH public key trước khi tạo máy")
+    if payload.job_id:
+        try:
+            agent_settings()
+        except ValueError as exc:
+            raise ManagerError(503, str(exc)) from exc
+        job = db.get(AgentJob, str(payload.job_id), with_for_update=True)
+        if job is None or job.user_id != user_id:
+            raise ManagerError(404, "Không tìm thấy job")
+        if job.status == "COMPLETED":
+            raise ManagerError(409, "Job đã hoàn thành")
+        if db.scalar(select(MachineJob).where(MachineJob.job_id == job.id)):
+            raise ManagerError(409, "Job đã gắn với máy khác")
     machine = Machine(
         user_id=user_id,
         name=payload.name,
@@ -230,6 +259,8 @@ def create_machine(
     db.add(machine)
     db.flush()
     _prepare_attempts(db, machine, payload)
+    if payload.job_id:
+        db.add(MachineJob(machine_id=machine.id, job_id=str(payload.job_id)))
     db.add(
         MachineLifecycle(
             machine_id=machine.id,
@@ -386,6 +417,16 @@ def reconcile_machine(db: Session, machine_id: int) -> None:
         or _utc(life.next_action_at) > now
     ):
         return
+    run = recovery.pending_run(db, machine_id)
+    if life.delete_requested:
+        recovery.cancel_recovery(db, machine_id)
+        run = None
+    elif run and run.state in {"CLEANUP", "PLACEMENT"}:
+        old = db.get(InstanceAttempt, run.failed_attempt_id)
+        if old.state == "ENDED":
+            recovery.plan_replacement(db, machine, life, run)
+            db.commit()
+            return
     attempt = db.scalar(
         select(InstanceAttempt)
         .where(
@@ -408,15 +449,21 @@ def reconcile_machine(db: Session, machine_id: int) -> None:
                 .order_by(InstanceAttempt.position)
             )
             if attempt is None:
-                _failed(
-                    life, "Hết ứng viên có capacity; có thể thử lại sau", permanent=True
-                )
+                if run and run.state == "STARTING":
+                    run.state = "PLACEMENT"
+                    recovery.plan_replacement(db, machine, life, run)
+                else:
+                    _failed(
+                        life,
+                        "Hết ứng viên có capacity; có thể thử lại sau",
+                        permanent=True,
+                    )
             else:
                 owner = db.get(User, machine.user_id, populate_existing=True)
                 if owner is None or not owner.is_active:
                     _failed(life, "Tài khoản đã bị vô hiệu hóa", permanent=True)
                 else:
-                    if machine.status != "PROVISIONING":
+                    if machine.status not in {"PROVISIONING", "RECOVERING"}:
                         machine.status = "PROVISIONING"
                         db.commit()
                         return
@@ -462,6 +509,16 @@ def reconcile_machine(db: Session, machine_id: int) -> None:
                             .where(InstanceAttempt.id == attempt.id)
                             .values(state="CREATING")
                         )
+                        binding = marker_db.get(MachineJob, machine_id)
+                        if binding:
+                            job = marker_db.get(
+                                AgentJob, binding.job_id, with_for_update=True
+                            )
+                            job.agent_token_hash = hashlib.sha256(
+                                attempt_token(attempt.request_id).encode()
+                            ).hexdigest()
+                            binding.active_attempt_id = attempt.id
+                            binding.activated_at = datetime.now(UTC)
                         marker_db.commit()
                     db.refresh(attempt)
                 create_called = True
@@ -494,9 +551,7 @@ def reconcile_machine(db: Session, machine_id: int) -> None:
             _end_instance(db, attempt)
             machine.status = "DELETED" if life.delete_requested else "RECOVERING"
             if not life.delete_requested:
-                _failed(
-                    life, "VM không còn tồn tại; cần cấp máy thay thế", permanent=True
-                )
+                recovery.begin_recovery(db, machine, life, attempt, "INSTANCE_LOST")
         elif life.delete_requested:
             try:
                 adapter.delete_instance(attempt.instance_ref)
@@ -504,15 +559,19 @@ def reconcile_machine(db: Session, machine_id: int) -> None:
                 if not is_not_found(exc):
                     raise
             # Both adapters may return before absence is observable. Confirm later.
+        elif run and run.state == "CLEANUP":
+            adapter.delete_instance(attempt.instance_ref)
+            machine.status = "RECOVERING"
+        elif reason := recovery.agent_failure(db, machine_id, attempt.id):
+            recovery.begin_recovery(db, machine, life, attempt, reason)
         elif info.status.upper() == "RUNNING":
             machine.status = "RUNNING"
+            recovery.mark_running(db, machine, attempt)
         elif info.status.upper() in {"PENDING", "PROVISIONING", "STAGING"}:
-            machine.status = "PROVISIONING"
+            machine.status = "RECOVERING" if run else "PROVISIONING"
         else:
             machine.status = "RECOVERING"
-            _failed(
-                life, "VM không chạy; hãy kiểm tra cloud hoặc xóa máy", permanent=True
-            )
+            recovery.begin_recovery(db, machine, life, attempt, "INSTANCE_STOPPED")
     except SQLAlchemyError:
         # A failed DB write must roll back; the saved request remains retryable.
         raise

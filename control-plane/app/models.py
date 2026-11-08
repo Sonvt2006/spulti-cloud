@@ -437,3 +437,37 @@ class AgentProgram(Base):
     source_code: Mapped[str] = mapped_column(Text, nullable=False)
     source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     step_delay: Mapped[Decimal] = mapped_column(Numeric(8, 3), nullable=False)
+
+
+class MachineJob(Base):
+    """One managed job per logical machine; credentials belong to one attempt."""
+
+    __tablename__ = "machine_jobs"
+    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id"), primary_key=True)
+    job_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_jobs.id"), unique=True, nullable=False
+    )
+    active_attempt_id: Mapped[int | None] = mapped_column(
+        ForeignKey("instance_attempts.id")
+    )
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RecoveryRun(Base):
+    """Durable recovery history, deduplicated by failed instance attempt."""
+
+    __tablename__ = "recovery_runs"
+    id: Mapped[int] = _id_pk()
+    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id"), index=True)
+    failed_attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("instance_attempts.id"), unique=True, nullable=False
+    )
+    replacement_attempt_id: Mapped[int | None] = mapped_column(
+        ForeignKey("instance_attempts.id")
+    )
+    reason: Mapped[str] = mapped_column(String(40), nullable=False)
+    state: Mapped[str] = mapped_column(String(20), default="CLEANUP", nullable=False)
+    started_at: Mapped[datetime] = _created_at()
+    excluded_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)

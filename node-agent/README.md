@@ -144,3 +144,11 @@ Các test kiểm tra checkpoint/resume, metadata AWS/GCP, tín hiệu dừng, gi
 **Giới hạn:** Khi chạy local không cấu hình URL/token, dữ liệu chỉ nằm trên đĩa VM. Khi kết nối API, chỉ checkpoint đã được nền tảng xác nhận mới được coi là đồng bộ. Với chế độ chỉ lưu lúc dừng/kết thúc, nếu tiến trình bị kill đột ngột hoặc VM mất trước khi kịp xử lý cảnh báo thì tiến độ từ lần lưu gần nhất chưa được ghi lại. Agent hiện chỉ chạy workload demo.
 
 **An toàn:** Không chạy **hai Agent cùng `job-id` và `state-dir` cùng lúc**; MVP chưa có distributed lock. File checkpoint của một job có `total_steps` cố định; đổi tổng bước sẽ báo lỗi để tránh ghi đè sai trạng thái.
+
+### Managed recovery
+
+Instance Manager có thể cấp VM và chạy `agent.py managed` bằng token riêng cho
+attempt. Runner tự tải chương trình/checkpoint, không cần API key của người dùng.
+Agent gửi thêm heartbeat theo thời gian mỗi 20 giây trong khi chờ hoặc chạy một
+bước dài. Xem [Lifecycle & Recovery](../control-plane/RECOVERY.md) để cấu hình
+release, gắn job vào máy và kiểm tra lịch sử thay VM.

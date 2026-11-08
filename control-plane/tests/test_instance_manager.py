@@ -13,12 +13,17 @@ from app.adapters.base import InstanceInfo  # noqa: E402
 from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import (  # noqa: E402
+    AgentInterruption,
+    AgentJob,
+    AgentProgram,
     Instance,
     InstanceAttempt,
     Machine,
+    MachineJob,
     MachineLifecycle,
     MachineType,
     MachineTypeOffering,
+    RecoveryRun,
     SpotPrice,
     SpotRisk,
     SSHKey,
@@ -46,6 +51,11 @@ MODELS = (
     SpotPrice,
     SpotRisk,
     Machine,
+    AgentJob,
+    AgentProgram,
+    AgentInterruption,
+    MachineJob,
+    RecoveryRun,
     Instance,
     MachineLifecycle,
     InstanceAttempt,
@@ -142,8 +152,16 @@ class FakeCloud:
             self.on_create(spec)
         info = InstanceInfo(
             provider=self.provider,
-            instance_ref="i-test" if self.provider == "AWS" else spec.name,
-            provider_instance_id="i-test" if self.provider == "AWS" else "123456",
+            instance_ref=(
+                "i-test" if len(self.specs) == 1 else f"i-test-{len(self.specs)}"
+            )
+            if self.provider == "AWS"
+            else spec.name,
+            provider_instance_id=(
+                ("i-test" if len(self.specs) == 1 else f"i-test-{len(self.specs)}")
+                if self.provider == "AWS"
+                else str(123455 + len(self.specs))
+            ),
             status="pending" if self.provider == "AWS" else "RUNNING",
             public_ip="203.0.113.5",
             private_ip="10.0.0.5",
@@ -543,22 +561,19 @@ class InstanceManagerTests(unittest.TestCase):
         self.gcp.instances.clear()
         self.tick(machine_id)
         self.assertEqual(self.view(machine_id)["status"], "RECOVERING")
-        self.assertTrue(self.view(machine_id)["needs_attention"])
+        self.assertFalse(self.view(machine_id)["needs_attention"])
         self.assertIsNotNone(self.db.scalar(select(Instance)).ended_at)
-        response = self.client.post(
-            f"/api/machines/{machine_id}/retry", headers=self.headers()
-        )
-        self.assertEqual(response.status_code, 202, response.text)
         self.tick(machine_id)
-        # Provider assigns a new numeric id for the replacement.
-        with patch.object(
-            self.gcp,
-            "create_instance",
-            return_value=InstanceInfo("GCP", "new-name", "987654", "RUNNING"),
-        ):
-            self.tick(machine_id)
+        # Same provider is the only choice: wait for cooldown, without manual retry.
+        run = self.db.scalar(select(RecoveryRun))
+        self.assertEqual(run.state, "PLACEMENT")
+        run.excluded_until = datetime.now(UTC) - timedelta(seconds=1)
+        self.db.commit()
+        self.tick(machine_id)
+        self.tick(machine_id)
         self.assertEqual(self.db.scalar(select(func.count()).select_from(Instance)), 2)
         self.assertEqual(self.view(machine_id)["status"], "RUNNING")
+        self.assertEqual(run.state, "SUCCEEDED")
 
     def test_gcp_terminated_means_stopped_not_deleted(self):
         machine_id = self.provision(provider="GCP")

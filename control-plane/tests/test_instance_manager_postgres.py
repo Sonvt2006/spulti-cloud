@@ -1,15 +1,26 @@
 """Optional real-lock tests; each run owns a disposable PostgreSQL schema."""
 
+import hashlib
 import json
 import os
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from threading import Barrier, Event
 from unittest.mock import patch
 from uuid import uuid4
 
 from app.database import Base
-from app.models import Instance, InstanceAttempt, Machine, MachineLifecycle
+from app.models import (
+    AgentJob,
+    Instance,
+    InstanceAttempt,
+    Machine,
+    MachineJob,
+    MachineLifecycle,
+    RecoveryRun,
+)
 from app.services.instance_manager import (
     MachineRequest,
     ManagerError,
@@ -161,6 +172,95 @@ class PostgresConcurrencyTests(unittest.TestCase):
         self.assertEqual(len(cloud.specs), 1)
         with Session(self.engine) as db:
             self.assertEqual(db.scalar(select(func.count()).select_from(Instance)), 1)
+
+    def due(self, machine_id):
+        with Session(self.engine) as db:
+            db.get(MachineLifecycle, machine_id).next_action_at = datetime.now(
+                UTC
+            ) - timedelta(seconds=1)
+            db.commit()
+
+    def test_duplicate_recovery_workers_create_one_cross_cloud_replacement(self):
+        machine_id = self.submit(str(uuid4()))
+        aws, gcp = FakeCloud(), FakeCloud("GCP")
+        with patch(
+            "app.services.instance_manager.make_adapter",
+            side_effect=lambda provider, config: aws if provider == "AWS" else gcp,
+        ):
+            self.run_worker(machine_id)
+            self.run_worker(machine_id)
+            key = aws.specs[0].request_id
+            aws.instances[key] = replace(aws.instances[key], status="running")
+            self.due(machine_id)
+            self.run_worker(machine_id)
+            aws.instances.clear()
+            for _ in range(4):
+                self.due(machine_id)
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    futures = [
+                        pool.submit(self.run_worker, machine_id) for _ in range(2)
+                    ]
+                    for future in futures:
+                        future.result(timeout=10)
+        self.assertEqual(len(gcp.specs), 1)
+        with Session(self.engine) as db:
+            self.assertEqual(
+                db.scalar(select(func.count()).select_from(RecoveryRun)), 1
+            )
+            self.assertEqual(db.scalar(select(RecoveryRun)).state, "SUCCEEDED")
+            self.assertEqual(db.scalar(select(func.count()).select_from(Instance)), 2)
+
+    def test_managed_credential_marker_survives_worker_crash(self):
+        from app.services.managed_agent import attempt_token
+
+        with patch.dict(
+            os.environ,
+            {
+                "SPULTI_PUBLIC_API_URL": "https://api.example.test",
+                "SPULTI_AGENT_RELEASE_URL": "https://release.example.test/agent.tar.gz",
+                "SPULTI_AGENT_RELEASE_SHA256": "a" * 64,
+            },
+        ):
+            with Session(self.engine) as db:
+                job = AgentJob(
+                    id=str(uuid4()),
+                    user_id=self.owner_id,
+                    agent_token_hash="a" * 64,
+                    total_steps=10,
+                    checkpoint_every=1,
+                    heartbeat_every=1,
+                )
+                db.add(job)
+                db.commit()
+                job_id = job.id
+                machine_id = create_machine(
+                    db,
+                    self.owner_id,
+                    MachineRequest(name="managed", vcpu=4, ram_gib=16, job_id=job_id),
+                    str(uuid4()),
+                ).id
+        self.run_worker(machine_id)
+        cloud = FakeCloud()
+        with patch("app.services.instance_manager.make_adapter", return_value=cloud):
+            with (
+                Session(self.engine) as db,
+                patch.object(db, "commit", side_effect=RuntimeError("worker crashed")),
+                self.assertRaisesRegex(RuntimeError, "worker crashed"),
+            ):
+                reconcile_machine(db, machine_id)
+            with Session(self.engine) as db:
+                binding = db.get(MachineJob, machine_id)
+                self.assertIsNotNone(binding.active_attempt_id)
+                attempt = db.get(InstanceAttempt, binding.active_attempt_id)
+                self.assertEqual(attempt.state, "CREATING")
+                self.assertEqual(
+                    db.get(AgentJob, job_id).agent_token_hash,
+                    hashlib.sha256(
+                        attempt_token(attempt.request_id).encode()
+                    ).hexdigest(),
+                )
+            self.run_worker(machine_id)
+        self.assertEqual(len(cloud.specs), 1)
 
 
 if __name__ == "__main__":

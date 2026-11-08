@@ -17,7 +17,13 @@ repo = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(repo))
 
 from app.database import SessionLocal, engine  # noqa: E402
-from app.models import AgentInterruption, AgentJob, AgentProgram, User  # noqa: E402
+from app.models import (  # noqa: E402
+    AgentInterruption,
+    AgentJob,
+    AgentProgram,
+    MachineJob,
+    User,
+)
 
 
 def get_current_user(authorization: str | None = Header(default=None)):
@@ -73,6 +79,7 @@ if __name__ == "__main__":
     AgentJob.__table__.create(engine, checkfirst=True)
     AgentInterruption.__table__.create(engine, checkfirst=True)
     AgentProgram.__table__.create(engine, checkfirst=True)
+    MachineJob.__table__.create(engine, checkfirst=True)
     with SessionLocal.begin() as db:
         if db.get(User, 1) is None:
             db.add(

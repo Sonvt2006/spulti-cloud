@@ -422,3 +422,5 @@ python -m unittest discover -s tests -v
   ```bash
   docker compose down -v
   ```
+
+Lifecycle và recovery tự động: xem [RECOVERY.md](RECOVERY.md).

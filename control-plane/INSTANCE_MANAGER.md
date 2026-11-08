@@ -58,7 +58,7 @@ Giữ nguyên các trạng thái đã có trong schema `machines`:
 | `PENDING` | Đã lưu yêu cầu, chờ bắt đầu cấp máy. |
 | `PROVISIONING` | Đang tạo/xác minh kết quả tạo hoặc VM đang khởi động. |
 | `RUNNING` | Cloud báo VM đang chạy. |
-| `RECOVERING` | VM mất hoặc không còn chạy; cần kiểm tra/cấp VM thay thế. |
+| `RECOVERING` | VM mất hoặc không còn chạy; đang dọn/thay VM và khôi phục job. |
 | `DELETED` | Chưa gửi tạo VM, hoặc đã xác nhận VM quản lý kết thúc/không còn tồn tại. |
 
 `delete_requested=true` thể hiện ý định xóa trong lúc trạng thái máy vẫn phản ánh
@@ -217,10 +217,10 @@ lại khi Redis hoạt động. Khi VM sẵn sàng, SSH bằng private key tươ
 - VM mất thì chuyển `RECOVERING`; retry có thể cấp VM thay thế khi VM cũ đã kết
   thúc. VM cũ còn tồn tại nhưng dừng thì retry chỉ kiểm tra VM đó, chưa cấp thêm VM.
 
-**Phạm vi Recovery:** chưa có Node Agent, heartbeat, đồng bộ/khôi phục checkpoint,
-chạy lại job hoặc tự động di chuyển công việc. Polling không chứng minh nguyên
-nhân VM mất nên manager không tự ghi sự kiện `RECLAIM`. Recovery có thể dùng luồng
-cấp máy này sau khi xác minh/dọn VM cũ. Chưa có cloud quota preflight.
+**Phạm vi Recovery:** đã có điều phối thay VM, cooldown ứng viên, heartbeat timeout,
+bootstrap managed job và khôi phục Python/JSON checkpoint; xem [RECOVERY.md](RECOVERY.md).
+Polling không chứng minh nguyên nhân VM mất, nên lịch sử recovery phân biệt mất VM,
+heartbeat timeout và thông báo thu hồi. Chưa có cloud quota preflight.
 
 ## Kiểm thử
 

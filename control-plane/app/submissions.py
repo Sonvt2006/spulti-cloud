@@ -6,9 +6,10 @@ from uuid import UUID
 
 from app.agent_api import CreateJob, Db, _job_for_owner, _summary
 from app.auth import CurrentUser
-from app.models import AgentJob, AgentProgram
+from app.models import AgentJob, AgentProgram, MachineJob
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 router = APIRouter(prefix="/api/agent", tags=["node-agent"])
@@ -127,6 +128,10 @@ def replace_agent_token(
     job = db.get(AgentJob, identifier, with_for_update={"key_share": True})
     if job is None or job.user_id != user.id:
         raise HTTPException(404, "Job not found")
+    if db.scalar(select(MachineJob).where(MachineJob.job_id == identifier)):
+        raise HTTPException(
+            409, "Managed job credentials are controlled by its machine"
+        )
     _program(db, identifier)
     job.agent_token_hash = hashlib.sha256(
         payload.agent_token.get_secret_value().encode()

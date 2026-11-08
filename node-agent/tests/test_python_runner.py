@@ -8,6 +8,7 @@ import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -33,6 +34,30 @@ class PythonRunnerTests(unittest.TestCase):
             step_delay=0,
             state_dir=self.root,
         )
+
+    def test_long_step_sends_periodic_heartbeat_before_step_finishes(self):
+        program = PythonProgram("import time\ntime.sleep(0.2)\n", "slow.py", 1)
+        config = replace(
+            self.config,
+            total_steps=1,
+            heartbeat_every=999,
+            checkpoint_seconds=3600,
+            control_plane_url="http://localhost",
+            agent_token="test-token",
+        )
+        remote = Mock()
+        remote.get_checkpoint.return_value = None
+        original = time.monotonic
+        with (
+            patch("job_runner.ControlPlaneClient", return_value=remote),
+            patch(
+                "job_runner.time", SimpleNamespace(monotonic=lambda: original() * 1000)
+            ),
+        ):
+            self.assertEqual(run_job(config, program=program), 0)
+        calls = [call.args for call in remote.send_heartbeat.call_args_list]
+        self.assertGreaterEqual(calls.count((0, 0, "RUNNING")), 2)
+        self.assertEqual(calls[-1], (1, 1, "COMPLETED"))
 
     def test_notice_during_long_step_stops_child_and_reports_prior_result(self):
         marker = self.root / "started"

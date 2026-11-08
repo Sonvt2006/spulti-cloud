@@ -117,6 +117,61 @@ class SubmissionE2E(AgentHTTPTestCase):
         self.assertIn("already COMPLETED", completed.stdout)
         self.assertNotIn("USER_MODULE_LOADED", completed.stdout)
 
+    def test_managed_vm_restores_program_and_checkpoint_without_owner_credentials(self):
+        root = Path(self.tmp.name)
+        code = root / "managed_squares.py"
+        code.write_text(SOURCE)
+        first = self.run_command(
+            "submit",
+            str(code),
+            "--total-steps",
+            "6",
+            "--step-delay",
+            "0",
+            "--state-dir",
+            str(root / "old-vm"),
+            script=INTERRUPT_AFTER_FOUR,
+        )
+        self.assertEqual(first.returncode, 130, first.stdout + first.stderr)
+        manifest = self.manifest(root / "old-vm", first.stdout)
+        job_id = manifest["job_id"]
+        new_token = "replacement-attempt-token-" + uuid4().hex
+        self.request(
+            "POST",
+            f"/api/agent/jobs/{job_id}/agent-token",
+            {"agent_token": new_token},
+            token="test-jwt-user1",
+        )
+        code.unlink()
+        env = os.environ.copy()
+        env.pop("SPULTI_API_KEY", None)
+        env.update(
+            SPULTI_JOB_ID=job_id,
+            SPULTI_AGENT_TOKEN=new_token,
+            SPULTI_CONTROL_PLANE_URL=self.url,
+            SPULTI_CLOUD_PROVIDER="none",
+        )
+        command = [
+            sys.executable,
+            str(AGENT),
+            "managed",
+            "--state-dir",
+            str(root / "new-vm"),
+        ]
+        resumed = subprocess.run(
+            command, env=env, capture_output=True, text=True, timeout=30
+        )
+        self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
+        self.assertIn("RESTORED_FROM_CONTROL_PLANE step=4", resumed.stdout)
+        self.assertIn("USER_CODE step=6 sum=91", resumed.stdout)
+        self.assertNotIn("USER_CODE step=1", resumed.stdout)
+        self.assertNotIn(new_token, resumed.stdout + resumed.stderr)
+        repeated = subprocess.run(
+            command, env=env, capture_output=True, text=True, timeout=30
+        )
+        self.assertEqual(repeated.returncode, 0, repeated.stderr)
+        self.assertNotIn("USER_CODE", repeated.stdout)
+
     def test_lost_registration_reply_reuses_same_job(self):
         root = Path(self.tmp.name)
         code = root / "squares.py"
