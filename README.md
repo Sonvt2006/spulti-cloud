@@ -6,6 +6,8 @@ Xem [hướng dẫn chạy local trên Windows 11 và Ubuntu](control-plane/READ
 
 Tài liệu khác: [triển khai trên EC2](control-plane/README.md), [Spulti CLI](cli/README.md), [quy trình đóng góp](CONTRIBUTING.md).
 
+Quản lý vòng đời máy qua API: [Instance Manager](control-plane/INSTANCE_MANAGER.md).
+
 ## About
 
 Spulti-cloud là nền tảng thuê máy spot đa đám mây cho AWS và Google Cloud.

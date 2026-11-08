@@ -226,6 +226,67 @@ class Instance(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class MachineLifecycle(Base):
+    """Durable intent; Redis delivery is only a wake-up signal."""
+
+    __tablename__ = "machine_lifecycles"
+    __table_args__ = (UniqueConstraint("user_id", "request_key"),)
+
+    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_key: Mapped[str] = mapped_column(String(36), nullable=False)
+    request_payload: Mapped[dict[str, Any]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False
+    )
+    delete_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    next_action_at: Mapped[datetime] = _created_at()
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class InstanceAttempt(Base):
+    """Immutable launch inputs, saved before the first cloud call."""
+
+    __tablename__ = "instance_attempts"
+    __table_args__ = (
+        UniqueConstraint("machine_id", "position"),
+        CheckConstraint(
+            "state IN ('READY', 'CREATING', 'ACTIVE', 'REJECTED', 'ENDED')",
+            name="instance_attempts_state_check",
+        ),
+    )
+
+    id: Mapped[int] = _id_pk()
+    machine_id: Mapped[int] = mapped_column(
+        ForeignKey("machines.id"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    machine_type_id: Mapped[int] = mapped_column(
+        ForeignKey("machine_types.id"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(10), nullable=False)
+    region: Mapped[str] = mapped_column(String(50), nullable=False)
+    zone: Mapped[str] = mapped_column(String(50), nullable=False)
+    spec: Mapped[dict[str, Any]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False
+    )
+    adapter_config: Mapped[dict[str, Any]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False
+    )
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="READY")
+    instance_id: Mapped[int | None] = mapped_column(
+        ForeignKey("instances.id"), unique=True
+    )
+    instance_ref: Mapped[str | None] = mapped_column(String(255))
+    provider_status: Mapped[str | None] = mapped_column(String(50))
+    private_ip: Mapped[str | None] = mapped_column(String(45))
+    public_ip: Mapped[str | None] = mapped_column(String(45))
+    created_at: Mapped[datetime] = _created_at()
+
+
 class SpotPrice(Base):
     # Lịch sử giá theo giờ của từng loại máy.
     __tablename__ = "spot_prices"

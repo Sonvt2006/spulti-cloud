@@ -30,6 +30,10 @@ celery_app.conf.update(
 # UTC schedule. Keep exactly one beat service for this application.
 celery_app.conf.timezone = "UTC"
 celery_app.conf.beat_schedule = {
+    "reconcile-machines": {
+        "task": "spulti.reconcile_machines",
+        "schedule": 15.0,
+    },
     "aws-spot-prices-every-15-min": {
         "task": "spulti.market.collect",
         "schedule": crontab(minute="*/15"),

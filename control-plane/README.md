@@ -2,17 +2,20 @@
 
 > Chạy trên laptop Windows 11 hoặc Ubuntu: xem [README.local.md](README.local.md). Hướng dẫn bên dưới dành cho EC2/RDS với `compose.yaml`.
 
+> Quản lý vòng đời máy qua API: xem [Instance Manager](INSTANCE_MANAGER.md) để cấu hình image/network, tạo hai bảng lifecycle mới và chạy Celery beat.
+
 Hệ thống Control Plane xử lý tác vụ bất đồng bộ (Asynchronous Task Queue) sử dụng **FastAPI**, **Celery**, **Redis**, **Nginx Reverse Proxy** và cơ sở dữ liệu **AWS RDS PostgreSQL**, được đóng gói và điều phối hoàn toàn bằng **Docker Compose**.
 
 ---
 
 ## 1. Kiến trúc hệ thống
 
-Hệ thống bao gồm 4 dịch vụ container hoạt động trong mạng nội bộ của Docker:
+Hệ thống bao gồm 5 dịch vụ container hoạt động trong mạng nội bộ của Docker:
 
 * **`nginx` (`nginx:stable-alpine`)**: Cổng giao tiếp duy nhất mở ra ngoài ở cổng `80` (`80:80`), giới hạn dung lượng request tối đa `1m` (`client_max_body_size 1m`) và điều hướng lưu lượng (`proxy_pass`) vào dịch vụ `api` ở cổng `8000`.
 * **`api` (`spulti-control-plane:dev`)**: Ứng dụng FastAPI chạy trên ASGI server `uvicorn` tại cổng `8000` dưới quyền người dùng phi đặc quyền `appuser` (UID `10001`) trên nền `python:3.12-slim`.
 * **`worker` (`spulti-control-plane:dev`)**: Tiến trình Celery Worker (`--concurrency=2`, `--loglevel=INFO`) thực thi các tác vụ chạy ngầm từ hàng đợi Redis với thời gian chờ tắt an toàn `stop_grace_period: 60s`.
+* **`beat` (`spulti-control-plane:dev`)**: Gửi tác vụ đồng bộ vòng đời máy mỗi 15 giây; chạy một tiến trình beat cho mỗi stack.
 * **`redis` (`redis:7-alpine`)**: Đóng vai trò là Message Broker (`redis://redis:6379/0`) và Result Backend (`redis://redis:6379/1`), được bật cơ chế lưu trữ bền vững AOF (`--appendonly yes`, `--appendfsync everysec`) và chính sách bộ nhớ `--maxmemory-policy noeviction` gắn với volume `redis_data`.
 
 ---
@@ -34,13 +37,13 @@ Hệ thống bao gồm 4 dịch vụ container hoạt động trong mạng nội
 │   ├── auth.py            # Đăng ký, đăng nhập (/api/auth/...) và dependency get_current_user (JWT hoặc API key)
 │   ├── api_keys.py        # Tạo, liệt kê, thu hồi API key cho CLI (/api/api-keys)
 │   ├── security.py        # Băm mật khẩu (argon2), tạo/kiểm tra JWT, sinh và băm API key
-│   └── tasks.py           # Định nghĩa các Celery background task (spulti.demo_add)
+│   └── tasks.py           # Demo, đồng bộ từng máy và quét các máy đến hạn
 ├── nginx/
 │   └── default.conf       # Cấu hình Nginx Reverse Proxy lắng nghe cổng 80 -> api:8000
 ├── .env.example          # Mẫu file .env chứa DATABASE_URL
 ├── .dockerignore          # Loại trừ .git, .venv, .env, __pycache__, *.pyc, *.pem khi build
 ├── Dockerfile             # Công thức đóng gói image Python 3.12 cho api và worker
-├── compose.yaml           # Điều phối 4 dịch vụ: redis, api, worker, nginx
+├── compose.yaml           # Điều phối redis, api, worker, beat, nginx
 ├── requirements.txt       # Danh sách các thư viện Python cần cài đặt
 └── README.md
 ```
@@ -157,7 +160,7 @@ docker compose run --rm --no-deps api python -m app.seed
 ```
 
 ### Bước 5: Khởi chạy hệ thống bằng Docker Compose
-Build image `spulti-control-plane:dev` và khởi chạy toàn bộ 4 dịch vụ ở chế độ chạy ngầm (`-d`):
+Build image `spulti-control-plane:dev` và khởi chạy toàn bộ 5 dịch vụ ở chế độ chạy ngầm (`-d`):
 
 ```bash
 docker compose up -d --build

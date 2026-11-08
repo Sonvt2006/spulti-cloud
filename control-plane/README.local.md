@@ -1,5 +1,8 @@
 # Chạy Spulti-cloud local trên Windows 11 và Ubuntu
 
+API quản lý vòng đời máy: xem [Instance Manager](INSTANCE_MANAGER.md) để cấu hình
+image/network, tạo bảng mới bằng `app.init_db` và chạy Celery beat (đã thêm vào Compose).
+
 Hướng dẫn dành cho thành viên muốn chạy control plane trên máy cá nhân, không cần SSH vào EC2 và không cần kết nối RDS. API, Celery worker, Redis, Nginx và PostgreSQL chạy bằng Docker Compose; AWS/GCP SDK trong worker vẫn gọi API cloud thật.
 
 **Local ở đây là nơi chạy control plane. Lệnh `create` của adapter vẫn tạo VM Spot trên AWS/GCP và phát sinh chi phí.** `docker compose down` không xóa các VM đó; cần chạy `delete` và kiểm tra trên cloud.
