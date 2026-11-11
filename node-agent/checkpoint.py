@@ -58,6 +58,7 @@ class CheckpointStore:
         self.job_id = job_id
         self.total_steps = total_steps
         self.source_sha256 = source_sha256
+        self.file_snapshot = None
         self.path = state_dir / "checkpoints" / f"{job_id}.json"
 
     def load(self) -> dict[str, Any] | None:
@@ -114,6 +115,7 @@ class CheckpointStore:
     def restore_remote(self, payload: dict[str, Any]) -> None:
         """Validate snapshot before overwriting local checkpoint."""
         self.validate(payload)
+        self.file_snapshot = payload.get("file_snapshot")
         write_json_atomic(self.path, payload)
 
     def save(
@@ -136,5 +138,7 @@ class CheckpointStore:
                 workload_state=running_sum,
                 source_sha256=self.source_sha256,
             )
+        if self.file_snapshot is not None:
+            payload["file_snapshot"] = self.file_snapshot
         self.validate(payload)
         write_json_atomic(self.path, payload)
