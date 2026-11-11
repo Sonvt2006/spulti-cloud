@@ -112,6 +112,9 @@ trong bước này; pool cần đủ cho số worker đồng thời. Hủy máy 
 
 1. Cấu hình credentials cho worker theo [README.local.md](README.local.md) hoặc
    [README.md](README.md).
+   Nếu chạy job có checkpoint/recovery, làm [S3 setup](S3_SETUP.md) để cấp quyền
+   S3 cho **API**, cấu hình bucket/region và phát hành Node Agent qua HTTPS.
+   Credentials cấp VM cho worker không tự chứng minh API đọc/ghi được checkpoint.
 2. Nạp catalog, offerings và giá spot. Seed minh họa không đủ để cấp máy thật;
    kiểm tra trước bằng `POST /api/placement/recommendations`.
 3. Đặt `SPULTI_LAUNCH_CONFIG` trong `.env.local` hoặc `.env`. Đây là JSON array;

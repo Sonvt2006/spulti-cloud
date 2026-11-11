@@ -2,11 +2,11 @@
 
 > Tài liệu mô tả kiến trúc, nhiệm vụ từng file và cách chạy thử **Node Agent kết nối Control Plane** trong dự án Spulti-cloud. Control Plane và Node Agent là hai chương trình độc lập, được đặt ở hai thư mục ngang cấp trong cùng repository.
 
-> **Phát hiện thu hồi AWS/GCP:** xem [INTERRUPTION.md](INTERRUPTION.md) để bật metadata polling, cấu hình service, tạo bảng báo cáo và kiểm thử. Tính năng lưu cuối/báo cáo đã có; tự tạo VM thay thế vẫn là task riêng.
+> **Phát hiện thu hồi AWS/GCP:** xem [INTERRUPTION.md](INTERRUPTION.md) để bật metadata polling, cấu hình service, tạo bảng báo cáo và kiểm thử. Tính năng lưu cuối/báo cáo đã có; tự thay VM và khôi phục managed job được mô tả trong [Recovery](../control-plane/RECOVERY.md).
 
 > **Gửi file Python sau khi SSH:** [SSH_JOBS.md](SSH_JOBS.md) mô tả `submit FILE.py --total-steps 100` để chạy toàn bộ file 100 lượt, kiểm tra cú pháp trước khi chạy và dừng khi có lỗi. Dùng `spulti.state` để lưu kết quả tùy ý; `resume JOB_ID` khôi phục code, bước và trạng thái trên VM mới. Các ví dụ tổng bình phương bên dưới là demo tích hợp, dùng checkpoint version 2; script gửi lên dùng version 3.
 
-Node Agent chịu trách nhiệm chạy workload trên máy thực thi (Spot VM AWS/GCP khi triển khai thực tế), gửi heartbeat về Control Plane và lưu checkpoint để có thể tiếp tục tác vụ sau khi tiến trình hoặc VM bị dừng. Control Plane cung cấp FastAPI để tạo job, tiếp nhận trạng thái và lưu checkpoint JSON vào PostgreSQL (local hoặc RDS).
+Node Agent chịu trách nhiệm chạy workload trên máy thực thi (Spot VM AWS/GCP khi triển khai thực tế), gửi heartbeat về Control Plane và lưu checkpoint để có thể tiếp tục tác vụ sau khi tiến trình hoặc VM bị dừng. Control Plane cung cấp FastAPI để tạo job, tiếp nhận trạng thái và lưu nội dung checkpoint JSON vào S3; PostgreSQL (local hoặc RDS) giữ tiến độ và tham chiếu object. Xem [thiết lập S3](../control-plane/S3_SETUP.md).
 
 ---
 
@@ -30,7 +30,7 @@ Node Agent chịu trách nhiệm chạy workload trên máy thực thi (Spot VM 
           | PostgreSQL  |    |       Node Agent         |
           | / AWS RDS   |    | chạy trên Spot VM AWS/GCP |
           | agent_jobs  |    | - thực thi workload       |
-          | checkpoint  |    | - gửi heartbeat           |
+          | S3 ref      |    | - gửi heartbeat           |
           +-------------+    | - lưu/tải checkpoint      |
                              +--------------------------+
 
@@ -42,7 +42,8 @@ Khi VM/tiến trình bị dừng:
 | Thành phần | Nhiệm vụ | Nơi chạy |
 |---|---|---|
 | **Control Plane (FastAPI)** | Tạo job, xác thực Agent, nhận heartbeat, lưu/đọc checkpoint | EC2 quản lý hoặc Docker local |
-| **PostgreSQL / RDS** | Lưu bảng `agent_jobs`, tiến độ và checkpoint JSON | PostgreSQL local hoặc AWS RDS |
+| **PostgreSQL / RDS** | Lưu bảng `agent_jobs`, tiến độ và tham chiếu checkpoint | PostgreSQL local hoặc AWS RDS |
+| **S3** | Lưu nội dung checkpoint JSON; API đọc/ghi bằng AWS credentials | Bucket private |
 | **Node Agent** | Thực thi workload, duy trì trạng thái và khôi phục công việc | Laptop khi test; Spot VM khi triển khai |
 | **Celery Worker / Beat** | Các tác vụ bất đồng bộ và lịch Market Collector của Control Plane | EC2 quản lý; không thực thi job demo của Agent |
 | **Redis** | Message Broker của Celery | Control Plane; không nằm trên đường truyền heartbeat Agent |
@@ -242,7 +243,7 @@ Model `AgentJob` đăng ký bảng `agent_jobs` bằng SQLAlchemy, cùng `Base` 
 | `status` | `PENDING`, `RUNNING`, `INTERRUPTED`, `COMPLETED` |
 | `current_step` | Bước mới nhất được Agent báo |
 | `checkpoint_step` | Bước gần nhất có checkpoint bền vững trên server |
-| `checkpoint_data` | Nội dung checkpoint JSON |
+| `checkpoint_data` | Tham chiếu S3 của checkpoint mới; dữ liệu JSON inline cũ vẫn được hỗ trợ |
 | `last_heartbeat_at` | Thời điểm Control Plane nhận heartbeat gần nhất |
 | `created_at`, `updated_at` | Thời gian tạo và cập nhật job |
 
@@ -450,13 +451,16 @@ Node Agent và Control Plane được triển khai thành hai tiến trình đ�
 - Trên Spot VM, Node Agent chạy chương trình `agent.py`, lấy địa chỉ Control Plane và job token từ quá trình cấp phát cấu hình an toàn.
 - Agent gọi API bằng **HTTPS** và gửi `X-Agent-Token` trong các request.
 
-Sau khi mã nguồn đã có trên EC2 quản lý, cập nhật API và khởi tạo bảng:
+Trước tiên hoàn thành [S3 setup](../control-plane/S3_SETUP.md), kiểm tra quyền
+đọc/ghi từ API và chuẩn bị release agent. Sau khi mã nguồn đã có trên EC2 quản
+lý, build, khởi tạo bảng và cập nhật đồng bộ API/worker/beat:
 
 ```bash
 cd ~/spulti-cloud/control-plane
-docker compose up -d --build api
-docker compose exec api python -m app.init_db
-docker compose ps api
+docker compose build
+docker compose run --rm --no-deps api python -m app.init_db
+docker compose up -d --build
+docker compose ps
 ```
 
 Ví dụ lệnh khởi động trên Spot VM (khi VM đã có Python và mã nguồn Node Agent):
@@ -490,4 +494,9 @@ python3 agent.py \
 | `Job config mismatch` | `total_steps` hoặc chu kỳ checkpoint/heartbeat khác cấu hình job |
 | `HTTPS` error | Agent không được gửi token qua HTTP đến máy từ xa; dùng HTTPS |
 
-**Giới hạn của phiên bản hiện tại:** Checkpoint là JSON cho job tính tổng bình phương, không phải snapshot bộ nhớ hay model AI lớn. Hệ thống chưa tự phát hiện heartbeat quá hạn để tạo máy thay thế, chưa tích hợp đầy đủ quy trình bootstrap Agent và chưa lưu checkpoint lớn lên S3/GCS. Những chức năng này thuộc giai đoạn triển khai tiếp theo của Spulti-cloud.
+**Giới hạn của phiên bản hiện tại:** Checkpoint là JSON cho job demo hoặc Python
+submission dùng `spulti.state`, không phải snapshot bộ nhớ hay file model AI lớn.
+Nội dung checkpoint đã lưu trên S3. Luồng managed jobs đã có bootstrap, phát hiện
+heartbeat quá hạn và điều phối VM thay thế; xem [Recovery](../control-plane/RECOVERY.md)
+để biết điều kiện và giới hạn. Chưa đồng bộ checkpoint ML lớn hoặc cả thư mục
+workload; luồng recovery chưa được kiểm chứng trên tài khoản cloud thật.

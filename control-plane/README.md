@@ -10,6 +10,18 @@ Hệ thống Control Plane xử lý tác vụ bất đồng bộ (Asynchronous T
 
 ---
 
+## Lộ trình deploy cloud
+
+1. Chuẩn bị EC2/RDS và Security Group theo mục 3 bên dưới.
+2. Làm [S3 setup](S3_SETUP.md): tạo bucket checkpoint private, gắn IAM role cho
+   EC2, đóng gói/upload agent và cấu hình URL HTTPS phát hành.
+3. Cài Docker, cấu hình `.env`, chuẩn bị mount và khởi chạy theo mục 4.
+4. Kiểm tra API theo mục 5 và đọc/ghi checkpoint theo [S3 setup](S3_SETUP.md).
+5. Cấu hình credentials cấp VM, image/network và catalog/giá theo
+   [Instance Manager](INSTANCE_MANAGER.md); seed mẫu chưa đủ cho máy thật.
+6. Thiết lập HTTPS cho API và cấu hình [Recovery](RECOVERY.md) trước khi chạy
+   managed job. Compose hiện chỉ phục vụ HTTP cổng 80; chưa tự cấp chứng chỉ TLS.
+
 ## 1. Kiến trúc hệ thống
 
 Hệ thống bao gồm 5 dịch vụ container hoạt động trong mạng nội bộ của Docker:
@@ -66,6 +78,10 @@ Hệ thống bao gồm 5 dịch vụ container hoạt động trong mạng nội
    * DB instance identifier: `spulti-db`, master username: `spulti_admin`, đặt mật khẩu mạnh.
    * *Additional configuration* → **Initial database name**: `spulti` (nếu bỏ trống, RDS sẽ không tạo database này).
    * Đặt cùng VPC với EC2, **Public access: No**.
+   * Có thể chọn **Connect to an EC2 compute resource** và chọn máy control plane
+     để AWS cấu hình kết nối tự động. Nếu chọn **Don't connect**, tự cấu hình
+     VPC/Security Group như dưới đây; tùy chọn này không bắt buộc.
+     Xem [AWS EC2–RDS connection](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/ec2-rds-connect.html).
    * Security Group của RDS: chỉ mở cổng **5432** với nguồn là **Security Group của EC2** (không mở `0.0.0.0/0`).
    * Sau khi tạo xong, lấy **Endpoint** trong tab *Connectivity & security* (dạng `spulti-db.xxxx.<region>.rds.amazonaws.com`).
 
@@ -134,7 +150,7 @@ git clone https://github.com/Sonvt2006/spulti-cloud.git spulti-cloud
 cd spulti-cloud/control-plane
 ```
 
-### Bước 4: Cấu hình kết nối RDS và khóa JWT
+### Bước 4: Cấu hình RDS, S3, release agent và khóa JWT
 Tạo file `.env` từ mẫu rồi thay `<password>` và `<rds-endpoint>` bằng thông tin RDS ở mục 3, và đặt `JWT_SECRET` bằng một chuỗi ngẫu nhiên dài ít nhất 32 ký tự 
 
 ```bash
@@ -147,6 +163,18 @@ python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
 `sslmode=require` bắt buộc kết nối tới RDS phải được mã hóa. Nếu mật khẩu có ký tự đặc biệt (`@`, `:`, `/`, `#`, ...), cần URL-encode trước khi đặt vào `DATABASE_URL`. `docker compose` sẽ báo lỗi và dừng nếu chưa đặt `DATABASE_URL` hoặc `JWT_SECRET`. Đổi `JWT_SECRET` sẽ làm mọi token đang dùng mất hiệu lực.
+
+Điền thêm `SPULTI_CHECKPOINT_BUCKET`, `AWS_REGION` theo [S3 setup](S3_SETUP.md).
+Với managed jobs, điền `SPULTI_PUBLIC_API_URL`, `SPULTI_AGENT_RELEASE_URL` và
+`SPULTI_AGENT_RELEASE_SHA256` theo cùng hướng dẫn; các URL phải là HTTPS hợp lệ.
+API dùng IAM role của EC2 để đọc/ghi S3, không chỉ worker cần AWS credentials.
+
+`compose.yaml` hiện có bind mount bắt buộc ở worker:
+`/etc/spulti/secrets/gcp-credentials.json` (credentials GCP hợp lệ) và
+`/var/lib/spulti-tests` (thư mục state cho script thử nghiệm).
+Chuẩn bị các đường dẫn này trước khi khởi chạy. Nếu chỉ triển khai AWS, bỏ mount
+GCP và `GOOGLE_APPLICATION_CREDENTIALS` trong bản Compose dùng cho môi trường đó;
+không tạo file credentials giả. Không commit credentials vào repo.
 
 Tạo các bảng trong database (chỉ cần chạy lần đầu, chạy lại cũng không sao vì chỉ tạo bảng còn thiếu):
 
@@ -179,6 +207,11 @@ docker compose ps
 ```
 
 ---
+
+Sau khi thay `.env`, chạy `docker compose up -d` để container nhận cấu hình mới;
+`docker compose restart` không cập nhật environment. Chạy thêm
+[kiểm tra S3 từ container API](S3_SETUP.md#5-cấu-hình-control-plane-và-kiểm-tra-s3)
+trước khi thử checkpoint/resume.
 
 ## 5. Kiểm tra hoạt động của API (Verification)
 
