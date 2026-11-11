@@ -95,7 +95,7 @@ Thông tin GCP của nhóm:
 Chế độ agent remote vẫn lưu checkpoint qua API lên S3. Làm
 [S3 setup](S3_SETUP.md), bao gồm mục **Nếu control plane chạy trên laptop**:
 Compose local truyền AWS credentials cho cả API và worker; identity đó cần
-quyền đọc/ghi bucket checkpoint. Test dùng kho giả lập không cần S3; chạy ứng dụng
+quyền đọc/ghi `checkpoints/*` trong bucket dùng chung. Test dùng kho giả lập không cần S3; chạy ứng dụng
 thật không tự dùng kho giả lập đó.
 
 ## 1. Repo cần gì để chạy local?

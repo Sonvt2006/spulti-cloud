@@ -1,28 +1,53 @@
 # Thiết lập S3 và phát hành Node Agent
 
-Làm bước này khi triển khai checkpoint/resume trên cloud, sau khi có EC2 control
-plane và trước khi chạy job. S3 là dịch vụ quản lý sẵn; không cài S3 lên EC2.
+Hướng dẫn này dành cho **control plane chạy trên EC2**, thao tác chủ yếu bằng
+AWS Console. Dùng **một bucket duy nhất** cho cả checkpoint và gói agent.
+Nếu đã có bucket, dùng lại bucket đó và bắt đầu ở **bước 2**.
 
-| Dữ liệu | Nơi lưu | Ai truy cập |
+Bạn sẽ làm theo thứ tự: **tạo bucket → cấp quyền cho EC2 → upload agent → tạo
+link tải agent → điền `.env` và kiểm tra**.
+
+Trong cùng bucket, chia dữ liệu theo hai đường dẫn:
+
+```text
+spulti-sonvt/
+├── checkpoints/       # Trạng thái công việc; chỉ control plane đọc/ghi
+└── agent/releases/    # Gói cài agent; CloudFront được phép đọc
+```
+
+**Một bucket, một IAM role cho EC2.** Dùng cùng tên bucket trong mọi policy dưới
+đây, nhưng giữ nguyên phần đường dẫn để giới hạn quyền:
+
+| Phần cần làm | Làm ở đâu? | Đường dẫn được cấp quyền |
 | --- | --- | --- |
-| Checkpoint JSON | Bucket private, prefix `checkpoints/` | API control plane đọc/ghi bằng IAM role |
-| Gói chương trình Node Agent `.tar.gz` | Bucket release riêng, prefix `agent/releases/` | Người triển khai upload; VM AWS/GCP tải qua HTTPS CloudFront |
-| Job, tiến độ, tham chiếu tới object S3 | PostgreSQL/RDS | Control plane |
+| Cho EC2 đọc/ghi checkpoint | IAM → role của EC2 → Permissions | `checkpoints/*` |
+| Bạn upload file agent | S3 → bucket → Upload | `agent/releases/*` |
+| Cho CloudFront đọc file agent | S3 → bucket → Permissions → Bucket policy | `agent/releases/*` |
 
-Agent gửi checkpoint qua API; VM chạy job không cần quyền S3 để lưu checkpoint.
-Gói agent chứa chương trình, không chứa checkpoint hay trạng thái của người dùng.
-Hướng dẫn dùng hai bucket để quyền phân phối chương trình không áp dụng cho dữ
-liệu checkpoint. Các tên bucket, account ID và domain bên dưới đều phải thay.
+Checkpoint là trạng thái công việc để chạy tiếp khi VM bị mất. Release là file
+`.tar.gz` chứa chương trình Node Agent để cài lên VM mới. Agent gửi checkpoint
+qua API; API mới là bên ghi/đọc S3.
 
-## 1. Tạo hai bucket bằng AWS Console
+Ghi lại thông tin sau để dùng xuyên suốt. Các tên dưới đây chỉ là **ví dụ**,
+thay bằng tên bạn đã tạo; không tạo lại bucket nếu đã có:
 
-Vào **S3 → General purpose buckets → Create bucket** và tạo lần lượt:
+| Thông tin | Ví dụ |
+| --- | --- |
+| Bucket dùng chung | `spulti-sonvt` |
+| Region của bucket | Singapore: `ap-southeast-1` |
+| EC2 control plane | Máy đang hoặc sẽ chạy Docker Compose cho API |
 
-- `spulti-checkpoints-ACCOUNT_ID-ap-southeast-1`
-- `spulti-releases-ACCOUNT_ID-ap-southeast-1`
+## 1. Tạo một bucket bằng AWS Console
 
-Chọn region gần control plane, ví dụ Singapore `ap-southeast-1`. Tên bucket phải
-khả dụng; dùng tên thực tế của bạn trong toàn bộ hướng dẫn. Với cả hai bucket:
+Vào **S3 → General purpose buckets → Create bucket**. Đặt tên, ví dụ
+`spulti-sonvt`; nếu tên đã được dùng, chọn tên khác khả dụng.
+
+Nếu trước đó đã tạo hai bucket, chọn một bucket để tiếp tục hướng dẫn này.
+Không cần tạo thêm hay xóa bucket còn lại. Nếu đã upload agent ở bucket khác,
+upload lại vào bucket đã chọn và dùng link CloudFront trỏ tới bucket đó.
+
+Chọn region gần control plane, ví dụ Singapore `ap-southeast-1`. Dùng cùng tên
+bucket thực tế xuyên suốt hướng dẫn, với các thiết lập:
 
 1. Bucket type: **General purpose**.
 2. Object Ownership: **Bucket owner enforced**, ACLs disabled.
@@ -36,11 +61,34 @@ khả dụng; dùng tên thực tế của bạn trong toàn bộ hướng dẫn
 
 Xem [hướng dẫn tạo bucket của AWS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html).
 
-## 2. Cấp quyền checkpoint cho EC2 control plane
+## 2. Cho EC2 quyền đọc/ghi đường dẫn checkpoints/
 
-Trong **IAM → Roles**, tạo role với trusted entity **AWS service → EC2**, hoặc
-bổ sung policy vào role control plane hiện có. Thêm inline policy sau, thay
-`CHECKPOINT_BUCKET` bằng tên bucket checkpoint:
+**Bước này cấp quyền cho `checkpoints/*` trong bucket dùng chung.**
+Role là danh tính AWS gắn cho EC2. Policy là đoạn JSON quy định role được làm gì.
+Bạn sẽ thêm policy vào role, sau đó bảo đảm role đó đã gắn vào máy control plane.
+
+### 2.1. Kiểm tra EC2 đã có role chưa
+
+1. Mở **EC2 → Instances**.
+2. Chọn **máy control plane** (máy chạy API, không phải máy spot chạy job).
+3. Mở tab **Security**, xem mục **IAM Role**.
+4. Nếu có tên role, bấm tên đó để mở trang IAM của role, rồi sang **2.3**.
+5. Nếu chưa có role, làm **2.2**.
+
+### 2.2. Tạo role nếu EC2 chưa có
+
+1. Mở **IAM → Roles → Create role**.
+2. Trusted entity type: chọn **AWS service**.
+3. Service/use case: chọn **EC2**, bấm **Next**.
+4. Ở bước Add permissions, chưa cần chọn policy, bấm **Next**.
+5. Role name: điền `spulti-control-plane-role`.
+6. Bấm **Create role**, rồi mở role vừa tạo.
+
+### 2.3. Thêm policy checkpoint vào role
+
+1. Trong trang role, mở tab **Permissions**.
+2. Bấm **Add permissions → Create inline policy**.
+3. Chọn trình soạn thảo **JSON**, thay nội dung bằng đoạn sau:
 
 ```json
 {
@@ -50,135 +98,227 @@ bổ sung policy vào role control plane hiện có. Thêm inline policy sau, th
       "Sid": "ReadWriteCheckpoints",
       "Effect": "Allow",
       "Action": ["s3:PutObject", "s3:GetObject"],
-      "Resource": "arn:aws:s3:::CHECKPOINT_BUCKET/checkpoints/*"
+      "Resource": "arn:aws:s3:::TEN_BUCKET/checkpoints/*"
     }
   ]
 }
 ```
 
-Trong **EC2 → Instances**, chọn máy control plane → **Actions → Security →
-Modify IAM role** và gắn role này. Nếu máy đã có role cấp phát VM, thêm policy
-vào role đó để giữ các quyền đang dùng. Policy trên chỉ cấp quyền checkpoint,
-không thay thế quyền EC2/GCP mà worker cần để tạo/xóa VM.
+4. Thay **chỉ** `TEN_BUCKET` bằng tên bucket dùng chung của bạn.
+   Ví dụ bucket `spulti-sonvt` thì dòng Resource phải là:
 
-API dùng `boto3` lấy credentials của instance role; không ghi access key vào
-archive hay `.env`. **API cần quyền S3**, kiểm tra STS trong worker thôi chưa đủ.
-Với Docker bridge, nếu container không lấy được credentials từ IMDS, kiểm tra
-EC2 metadata options: bật endpoint, yêu cầu **IMDSv2**, đặt response hop limit
-**2** cho môi trường container. Xem [AWS metadata options](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html).
+   ```text
+   "Resource": "arn:aws:s3:::spulti-sonvt/checkpoints/*"
+   ```
 
-EC2 cần kết nối HTTPS tới S3 (qua internet/NAT hoặc S3 VPC endpoint phù hợp).
-Bucket policy, endpoint policy hay tổ chức có explicit deny vẫn có thể chặn IAM
-allow ở trên. Role của API không cần `ListBucket` hoặc `DeleteObject` cho luồng
-checkpoint hiện tại.
+5. Bấm **Next**, đặt Policy name là `SpultiCheckpointReadWrite`.
+6. Bấm **Create policy**.
 
-## 3. Đóng gói và upload Node Agent
+Đoạn JSON này được dán trong **IAM role**, không dán vào Bucket policy của S3.
+Giữ nguyên `/checkpoints/*`; không đổi Resource thành toàn bộ `TEN_BUCKET/*`.
+Xem [thao tác thêm inline policy của AWS](https://docs.aws.amazon.com/IAM/latest/UserGuide/access_policies_manage-attach-detach.html).
 
-Chạy trên Ubuntu/WSL, tại **thư mục gốc `spulti-cloud`**, nơi có `node-agent/`:
+### 2.4. Gắn role vào EC2 nếu vừa tạo mới
+
+Nếu bạn thêm policy vào role vốn đã gắn với EC2, bỏ qua mục này.
+
+1. Quay lại **EC2 → Instances**, chọn máy control plane.
+2. Chọn **Actions → Security → Modify IAM role**.
+3. Chọn `spulti-control-plane-role`, bấm **Update IAM role**.
+
+Xem [cách gắn role của AWS](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/attach-iam-role.html).
+
+**Xong bước 2 khi:** EC2 hiển thị đúng IAM Role, và trong Permissions của role có
+`SpultiCheckpointReadWrite`. Đây mới là quyền lưu checkpoint; quyền tạo/xóa máy
+của worker được cấu hình riêng theo [Instance Manager](INSTANCE_MANAGER.md).
+Không thay role sẵn có bằng role mới nếu role cũ còn cấp các quyền ứng dụng cần.
+
+## 3. Đóng gói và upload vào agent/releases/
+
+**Dùng lại bucket ở bước 1, upload gói agent vào `agent/releases/`.**
+Bạn thao tác trên máy có mã nguồn repo, ví dụ laptop Ubuntu/WSL.
+
+### 3.1. Tạo file nếu chưa có
+
+Mở terminal tại thư mục gốc **`spulti-cloud`** (thư mục chứa `node-agent/`):
 
 ```bash
 tar -czf /tmp/node-agent-recovery.tar.gz \
   --exclude=tests --exclude=__pycache__ --exclude='*.pyc' \
   --exclude=.venv --exclude='.env*' --exclude='.state*' \
   -C node-agent .
-tar -tzf /tmp/node-agent-recovery.tar.gz
 sha256sum /tmp/node-agent-recovery.tar.gz
 ```
 
-File đầu ra nằm ở `/tmp/node-agent-recovery.tar.gz`, không nằm trong repo.
-Archive cần có `./agent.py`, `./managed.py` và các module đồng cấp ngay ở gốc,
-không bọc thêm thư mục `node-agent/`. Kiểm tra danh sách để loại mọi credentials,
-state hoặc dữ liệu riêng đã đặt trong thư mục source trước khi phát hành.
-Nếu đã có archive hợp lệ thì dùng luôn file đó; nén lại có thể đổi SHA256.
+Nếu đã tạo file rồi, chỉ chạy `sha256sum` để lấy hash của file đó. Hash là chuỗi
+64 ký tự đứng trước tên file; lưu lại để dùng ở bước 5. Nén lại có thể đổi hash.
 
-Máy upload cần AWS CLI v2 và phiên đăng nhập AWS hợp lệ (xem
-[README.local.md](README.local.md) để cài CLI/đăng nhập). Tài khoản phát hành cần
-quyền `s3:PutObject` trên `arn:aws:s3:::RELEASE_BUCKET/agent/releases/*`; quyền
-này thuộc người phát hành, không phải role đọc/ghi checkpoint.
+File nằm tại **`/tmp/node-agent-recovery.tar.gz`**. Kiểm tra nội dung:
 
 ```bash
-SPULTI_RELEASE_BUCKET='THAY_TEN_BUCKET_RELEASE'
-SPULTI_RELEASE_SHA256=$(sha256sum /tmp/node-agent-recovery.tar.gz | cut -d ' ' -f 1)
-aws s3 cp /tmp/node-agent-recovery.tar.gz \
-  "s3://${SPULTI_RELEASE_BUCKET}/agent/releases/${SPULTI_RELEASE_SHA256}/node-agent.tar.gz" \
-  --region ap-southeast-1
+tar -tzf /tmp/node-agent-recovery.tar.gz
 ```
 
-Hoặc dùng **S3 → bucket release → Upload** và upload vào prefix
-`agent/releases/<SHA256>/`. Không ghi đè một key đã phát hành; mỗi phiên bản dùng
-key mới và giữ các phiên bản cũ còn được attempt/recovery tham chiếu.
+Danh sách phải có `./agent.py`, `./managed.py` và các module đồng cấp. Không để
+archive chứa credentials, checkpoint hoặc dữ liệu riêng. Gói này sẽ được phép
+tải công khai qua CloudFront ở bước 4.
 
-## 4. Cấp URL HTTPS bền vững qua CloudFront
+### 3.2. Upload bằng trình duyệt
 
-Installer của managed job tải bằng HTTP thông thường, không ký request S3.
-Vì vậy `s3://...` hoặc URL HTTPS trực tiếp tới object private không dùng được.
-Presigned URL có hạn sử dụng cũng không phù hợp để cấu hình lâu dài: máy thay
-thế có thể được tạo sau khi URL hết hạn.
+1. Mở **S3 → bucket ở bước 1 → tab Objects**.
+2. Bấm **Create folder**, đặt tên `agent`, rồi mở thư mục đó.
+3. Tạo tiếp thư mục `releases`, mở nó.
+4. Tạo tiếp thư mục tên `v1`, mở nó.
+5. Bấm **Upload → Add files**, chọn `/tmp/node-agent-recovery.tar.gz`.
+6. Bấm **Upload**, đợi trạng thái thành công.
 
-Dùng **CloudFront với Origin Access Control (OAC)** để giữ bucket private và
-phân phối riêng gói chương trình:
+Nếu hộp chọn file khó tìm `/tmp`, copy file sang thư mục dễ tìm trên cùng máy:
 
-1. Vào **CloudFront → Create distribution**, chọn origin là bucket **release**
-   qua S3 REST endpoint (không chọn website endpoint). Để origin path trống.
-2. Chọn **Origin access control**, tạo OAC và chọn **Sign requests (recommended)**.
-3. Viewer protocol policy: **Redirect HTTP to HTTPS** hoặc **HTTPS only**.
-   Allowed methods: `GET, HEAD`. Không yêu cầu signed viewer URLs/cookies vì
-   installer hiện chưa cấp credential CloudFront cho VM.
-4. Tạo distribution. Áp dụng bucket policy mà Console đề xuất; chỉ cho phép
-   distribution này đọc prefix release. Mẫu dưới đây thay đủ ba placeholder:
+```bash
+cp /tmp/node-agent-recovery.tar.gz ~/Downloads/node-agent-recovery.tar.gz
+```
 
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Sid": "CloudFrontReadAgentReleases",
-         "Effect": "Allow",
-         "Principal": {"Service": "cloudfront.amazonaws.com"},
-         "Action": "s3:GetObject",
-         "Resource": "arn:aws:s3:::RELEASE_BUCKET/agent/releases/*",
-         "Condition": {
-           "StringEquals": {
-             "AWS:SourceArn": "arn:aws:cloudfront::ACCOUNT_ID:distribution/DISTRIBUTION_ID"
-           }
-         }
-       }
-     ]
-   }
-   ```
+Lệnh copy cần thư mục `~/Downloads` tồn tại. Với WSL, có thể mở đường dẫn
+`\\wsl$` trong Windows Explorer để lấy file từ filesystem của distro. Copy không
+đổi hash. Nếu file nằm trên server, tải về máy đang mở trình duyệt trước.
 
-5. Chờ distribution deploy xong. URL sẽ có dạng:
-   `https://DISTRIBUTION_DOMAIN/agent/releases/<SHA256>/node-agent.tar.gz`.
+Sau khi upload, object key (đường dẫn bên trong bucket) phải là:
 
-Bucket vẫn bật Block Public Access, nhưng **gói agent qua CloudFront được phép
-đọc công khai**. Chỉ đưa source/release có thể phân phối vào bucket này; không
-đưa checkpoint hoặc secrets vào đó. Nếu tổ chức yêu cầu release private cả ở
-phía người tải, cần thiết kế thêm cơ chế xác thực/phân phối phù hợp; installer
-hiện tại chưa thực hiện việc này.
+```text
+agent/releases/v1/node-agent-recovery.tar.gz
+```
 
-Cấu hình OAC theo [tài liệu AWS](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-s3.html).
+**Xong bước 3 khi:** thấy file ở đúng đường dẫn trên trong bucket dùng chung.
+Lần phát hành sau dùng thư mục mới như `v2`; không ghi đè file của `v1` đang dùng.
 
-Kiểm tra từ máy không cần credentials AWS, và từ mạng VM sẽ chạy job:
+Quyền upload là quyền của **tài khoản đăng nhập Console**, không phải role EC2
+ở bước 2. Nếu upload báo AccessDenied, cần quản trị viên cấp `s3:PutObject` trên
+`arn:aws:s3:::TEN_BUCKET/agent/releases/*` cho tài khoản/role đăng nhập;
+Console cũng có thể cần quyền liệt kê bucket. Không tạo thêm EC2 role để sửa
+lỗi upload trên trình duyệt.
+
+## 4. Tạo link tải agent bằng CloudFront
+
+VM mới cần một link HTTPS để tải file agent. CloudFront cung cấp link đó và đọc
+file từ `agent/releases/` trong bucket dùng chung. Giữ **Block all public access** bật;
+file chương trình vẫn tải công khai được qua link CloudFront. Bucket policy bên
+dưới chỉ cho CloudFront đọc `agent/releases/*`, không cấp quyền đọc `checkpoints/*`.
+
+Không dùng nút Copy URL của object private trên S3 làm link cho agent: installer
+hiện tải HTTP thông thường, không đăng nhập S3. Link presigned có hạn sử dụng
+cũng không phù hợp cho VM có thể được tạo lại nhiều ngày sau.
+
+### 4.1. Tạo distribution trỏ tới bucket dùng chung
+
+1. Mở **CloudFront → Create distribution**.
+2. Chọn origin là **Amazon S3**, rồi chọn **bucket dùng chung ở bước 1**.
+3. Dùng S3 bucket endpoint, không chọn S3 website endpoint. Để **Origin path** trống.
+4. Tạo distribution với domain mặc định `...cloudfront.net`; chưa cần domain riêng.
+5. Mở distribution vừa tạo và ghi lại **Distribution ARN** cùng
+   **Distribution domain name** ở trang chi tiết.
+
+Ở phần **Behaviors**, chỉnh behavior mặc định: Viewer protocol policy là
+**Redirect HTTP to HTTPS**, Allowed methods là **GET, HEAD**, không bật yêu cầu
+signed URLs/cookies của viewer. Installer hiện không có bước đăng nhập CloudFront.
+
+### 4.2. Cho CloudFront quyền đọc riêng agent/releases/
+
+**Đây là bucket policy của S3, không phải IAM role ở bước 2.**
+
+1. Vào **S3 → bucket ở bước 1 → Permissions**.
+2. Tìm **Bucket policy → Edit**.
+3. Với bucket mới chưa có policy, dán JSON sau. Nếu đã có policy, thêm statement
+   vào policy hiện có để giữ các quyền đang sử dụng.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudFrontReadAgentReleases",
+      "Effect": "Allow",
+      "Principal": {"Service": "cloudfront.amazonaws.com"},
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::TEN_BUCKET/agent/releases/*",
+      "Condition": {
+        "StringEquals": {
+          "AWS:SourceArn": "DAN_DISTRIBUTION_ARN_VAO_DAY"
+        }
+      }
+    }
+  ]
+}
+```
+
+4. Thay hai giá trị:
+
+   | Giá trị trong JSON | Thay bằng |
+   | --- | --- |
+   | `TEN_BUCKET` | Tên bucket dùng chung, ví dụ `spulti-sonvt` |
+   | `DAN_DISTRIBUTION_ARN_VAO_DAY` | Toàn bộ ARN đã copy ở 4.1, dạng `arn:aws:cloudfront::123456789012:distribution/E123EXAMPLE` |
+
+5. Bấm **Save changes**. Giữ Block Public Access bật.
+
+Resource phải kết thúc bằng `/agent/releases/*`. Không dùng `TEN_BUCKET/*`
+vì sẽ cấp CloudFront quyền đọc cả checkpoint trong bucket.
+
+### 4.3. Bật OAC để CloudFront sử dụng quyền trên
+
+OAC là cấu hình để CloudFront xác thực khi đọc bucket private; không phải role
+EC2 và bạn không cần tạo thêm IAM role.
+
+1. Vào **CloudFront → Origin access → Create control setting**.
+2. Name: `spulti-agent-releases`; Origin type: **S3**.
+3. Chọn **Sign requests (recommended)**, bấm **Create**.
+4. Mở distribution ở 4.1 → **Origins**, chọn origin S3 → **Edit**.
+5. Origin access: **Origin access control settings (recommended)**.
+6. Chọn OAC `spulti-agent-releases` vừa tạo → **Save changes**.
+7. Chờ distribution triển khai xong, không còn trạng thái Deploying.
+
+Nếu wizard tạo distribution đã tạo và gắn OAC, kiểm tra lại lựa chọn trên,
+không cần tạo OAC thứ hai. Xem [hướng dẫn OAC của AWS](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-s3.html).
+
+### 4.4. Thử link tải
+
+Ghép **Distribution domain name** ở 4.1 với object key ở 3.2. Ví dụ:
+
+```text
+https://d123example.cloudfront.net/agent/releases/v1/node-agent-recovery.tar.gz
+```
+
+Thay domain ví dụ bằng domain thật, thử mở link trong trình duyệt: file phải tải
+được. Hoặc dùng terminal trên máy cá nhân:
 
 ```bash
 curl --fail --location \
-  'https://DISTRIBUTION_DOMAIN/agent/releases/SHA256/node-agent.tar.gz' \
+  'https://DISTRIBUTION_DOMAIN/agent/releases/v1/node-agent-recovery.tar.gz' \
   --output /tmp/node-agent-downloaded.tar.gz
 sha256sum /tmp/node-agent-downloaded.tar.gz
 ```
 
-Hash tải về phải trùng file đã upload. VM cũng cần outbound HTTPS/DNS để tải
-release, cài gói hệ điều hành và gọi control plane.
+**Xong bước 4 khi:** tải được file và hash trùng hash ở bước 3.1. Lưu link này
+để điền `.env`. VM chạy job cần mạng ra ngoài để tải link này và gọi API.
 
 ## 5. Cấu hình control plane và kiểm tra S3
 
-Trong `control-plane/.env` trên EC2:
+**Từ bước này, SSH vào EC2 control plane.** Mở file `control-plane/.env`
+trong repo trên EC2, giữ các giá trị RDS/JWT đã cấu hình và điền thêm:
+
+| Biến | Lấy giá trị ở đâu? |
+| --- | --- |
+| `SPULTI_CHECKPOINT_BUCKET` | Tên bucket dùng chung ở bước 1; không thêm `s3://` |
+| `AWS_REGION` | Region của bucket dùng chung, ví dụ `ap-southeast-1` |
+| `SPULTI_PUBLIC_API_URL` | URL HTTPS của API control plane; không phải domain CloudFront tải agent |
+| `SPULTI_AGENT_RELEASE_URL` | Link tải đã kiểm tra ở bước 4.4 |
+| `SPULTI_AGENT_RELEASE_SHA256` | Chuỗi hash 64 ký tự ở bước 3.1 |
+
+Ví dụ cấu hình (thay các giá trị mẫu bằng giá trị thật):
 
 ```dotenv
-SPULTI_CHECKPOINT_BUCKET=THAY_TEN_BUCKET_CHECKPOINT
+SPULTI_CHECKPOINT_BUCKET=THAY_TEN_BUCKET
 AWS_REGION=ap-southeast-1
 SPULTI_PUBLIC_API_URL=https://api.example.com
-SPULTI_AGENT_RELEASE_URL=https://DISTRIBUTION_DOMAIN/agent/releases/SHA256/node-agent.tar.gz
+SPULTI_AGENT_RELEASE_URL=https://DISTRIBUTION_DOMAIN/agent/releases/v1/node-agent-recovery.tar.gz
 SPULTI_AGENT_RELEASE_SHA256=THAY_SHA256_64_KY_TU
 ```
 
@@ -224,7 +364,7 @@ credentials cấp VM và catalog/giá, rồi [Recovery](RECOVERY.md) để gắn
 
 ### Nếu control plane chạy trên laptop
 
-Bucket/release vẫn dùng như trên. `compose.local.yaml` truyền AWS credentials
+Bucket dùng chung và link tải agent vẫn dùng như trên. `compose.local.yaml` truyền AWS credentials
 cho cả API và worker từ terminal hiện tại. Export credentials tạm thời theo
 [hướng dẫn local](README.local.md), cấp quyền checkpoint cho identity đó và
 điền bucket/region vào `.env.local`, rồi chạy từ thư mục `control-plane`:
@@ -239,6 +379,12 @@ Không ghép `compose.yaml` của EC2 vào stack local. Khi credentials hết h�
 hình bucket khi bật checkpoint remote.
 
 ## 6. Lỗi thường gặp và lưu ý vận hành
+
+Nếu container API không lấy được role EC2 dù đã gắn role: kiểm tra EC2 metadata
+options, bật endpoint, dùng IMDSv2 và response hop limit **2** cho Docker bridge.
+Xem [AWS metadata options](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html).
+EC2 cũng cần đường mạng tới S3 qua internet/NAT hoặc S3 VPC endpoint.
+
 
 | Hiện tượng | Kiểm tra |
 | --- | --- |

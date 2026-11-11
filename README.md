@@ -28,7 +28,7 @@ Luồng sử dụng: **CLI → Control Plane → máy spot AWS/GCP → Node Agen
 
 - Phát triển trên máy cá nhân: [hướng dẫn Windows 11 và Ubuntu](control-plane/README.local.md).
 - Triển khai server: [hướng dẫn EC2/RDS](control-plane/README.md).
-- Lưu checkpoint và phân phối agent: [tạo S3, IAM và release Node Agent](control-plane/S3_SETUP.md).
+- Lưu checkpoint và phân phối agent trong một bucket S3: [tạo S3, IAM và release Node Agent](control-plane/S3_SETUP.md).
 - Chạy job tự động và thay VM khi gián đoạn: [Recovery](control-plane/RECOVERY.md).
 
 Thứ tự deploy cloud: **EC2/RDS → S3 và quyền truy cập → phát hành agent →

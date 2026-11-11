@@ -13,7 +13,7 @@ Hệ thống Control Plane xử lý tác vụ bất đồng bộ (Asynchronous T
 ## Lộ trình deploy cloud
 
 1. Chuẩn bị EC2/RDS và Security Group theo mục 3 bên dưới.
-2. Làm [S3 setup](S3_SETUP.md): tạo bucket checkpoint private, gắn IAM role cho
+2. Làm [S3 setup](S3_SETUP.md): tạo một bucket private chứa `checkpoints/` và `agent/releases/`, gắn IAM role cho
    EC2, đóng gói/upload agent và cấu hình URL HTTPS phát hành.
 3. Cài Docker, cấu hình `.env`, chuẩn bị mount và khởi chạy theo mục 4.
 4. Kiểm tra API theo mục 5 và đọc/ghi checkpoint theo [S3 setup](S3_SETUP.md).
