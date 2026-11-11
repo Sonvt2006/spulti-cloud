@@ -57,8 +57,19 @@ class SumOfSquaresState(BaseModel):
     running_sum: int = Field(ge=0, strict=True)
 
 
+class FileUpload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    size: int = Field(gt=0, le=256 * 1024 * 1024)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class FileSnapshot(FileUpload):
+    key: str = Field(max_length=256)
+
+
 class CheckpointPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    file_snapshot: FileSnapshot | None = None
     version: Literal[1, 2, 3]
     job_id: str
     total_steps: int
@@ -233,6 +244,38 @@ def agent_job_config(
     }
 
 
+@router.post("/jobs/{job_id}/files/upload")
+def file_upload_ticket(
+    job_id: str,
+    payload: FileUpload,
+    db: Db,
+    x_agent_token: Annotated[str | None, Header()] = None,
+) -> dict:
+    job = _job_for_agent(db, job_id, x_agent_token)
+    if job.status == "COMPLETED":
+        raise HTTPException(409, "Completed job cannot upload new files")
+    try:
+        return S3CheckpointStore().file_upload(job_id, payload.size, payload.sha256)
+    except (BotoCoreError, ClientError, RuntimeError):
+        raise HTTPException(503, "Checkpoint storage unavailable") from None
+
+
+@router.post("/jobs/{job_id}/files/download")
+def file_download_ticket(
+    job_id: str,
+    payload: FileSnapshot,
+    db: Db,
+    x_agent_token: Annotated[str | None, Header()] = None,
+) -> dict:
+    _job_for_agent(db, job_id, x_agent_token)
+    try:
+        return S3CheckpointStore().file_download(job_id, payload.model_dump())
+    except ValueError:
+        raise HTTPException(422, "Invalid file snapshot") from None
+    except (BotoCoreError, ClientError, RuntimeError):
+        raise HTTPException(503, "Checkpoint storage unavailable") from None
+
+
 @router.get("/jobs/{job_id}/checkpoint")
 def download_checkpoint(
     job_id: str,
@@ -305,7 +348,23 @@ def upload_checkpoint(
         raise HTTPException(413, "Checkpoint too large")
         # S3 phải lưu thành công trước khi cập nhật tiến độ trong RDS.
     try:
-        reference = S3CheckpointStore().save(data)
+        storage = S3CheckpointStore()
+        if (
+            job.checkpoint_data
+            and job.checkpoint_data.get("has_files")
+            and not payload.file_snapshot
+        ):
+            raise HTTPException(
+                409, "File checkpoint cannot be replaced by a JSON-only agent"
+            )
+        if payload.file_snapshot:
+            try:
+                storage.verify_files(job_id, payload.file_snapshot.model_dump())
+            except ValueError:
+                raise HTTPException(422, "Invalid file snapshot") from None
+        reference = storage.save(data)
+        if payload.file_snapshot:
+            reference["has_files"] = True
     except (BotoCoreError, ClientError, RuntimeError):
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,

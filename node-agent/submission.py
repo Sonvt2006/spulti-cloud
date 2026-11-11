@@ -18,7 +18,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import UUID, uuid4
 
 from checkpoint import write_json_atomic
-from config import AgentConfig
+from config import AgentConfig, add_file_checkpoint_args
 from control_plane import RemoteError, validate_control_plane_url
 from job_runner import run_job
 from program import PythonProgram, validate_source
@@ -176,6 +176,8 @@ def _run(program: dict, token: str, client: OwnerClient, args) -> int:
         agent_token=token,
         cloud_provider=args.cloud_provider,
         checkpoint_seconds=args.checkpoint_seconds,
+        checkpoint_dir=args.checkpoint_dir,
+        file_sync_seconds=args.file_sync_seconds,
     )
     print(f"[agent] JOB_ID={config.job_id}", flush=True)
     print(f"[agent] Resume: spulti-agent resume {config.job_id}", flush=True)
@@ -210,6 +212,7 @@ def main(argv: list[str]) -> int:
     )
     resume.add_argument("job_id", type=lambda value: str(UUID(value)))
     for command in (submit, resume):
+        add_file_checkpoint_args(command)
         command.add_argument("--control-plane-url")
         command.add_argument(
             "--checkpoint-seconds",

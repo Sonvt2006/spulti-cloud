@@ -45,6 +45,7 @@ class PythonProgram:
         validate_source(source)
         if Path(filename).name != filename or not filename.endswith(".py"):
             raise ValueError("Program filename must be a simple .py filename")
+        self.checkpoint_dir = None
         self.source = source
         self.filename = filename
         self.total_steps = total_steps
@@ -73,6 +74,8 @@ class PythonProgram:
             env.update(
                 SPULTI_STEP=str(number), SPULTI_TOTAL_STEPS=str(self.total_steps)
             )
+            if self.checkpoint_dir is not None:
+                env["SPULTI_CHECKPOINT_DIR"] = str(self.checkpoint_dir)
             worker = Path(__file__).with_name("script_worker.py")
             process = subprocess.Popen(
                 [

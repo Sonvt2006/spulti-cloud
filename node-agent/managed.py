@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from uuid import UUID
 
-from config import AgentConfig
+from config import AgentConfig, add_file_checkpoint_args
 from control_plane import ControlPlaneClient
 from job_runner import run_job
 from program import PythonProgram
@@ -16,6 +16,7 @@ from submission import job_lock
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run the job assigned to this VM")
     parser.add_argument("--state-dir", type=Path, default=Path("/var/lib/spulti-agent"))
+    add_file_checkpoint_args(parser)
     args = parser.parse_args(argv)
     job_id = str(UUID(os.environ["SPULTI_JOB_ID"]))
     client = ControlPlaneClient(
@@ -36,6 +37,8 @@ def main(argv=None):
             )
         config = AgentConfig(
             job_id=job_id,
+            checkpoint_dir=args.checkpoint_dir,
+            file_sync_seconds=args.file_sync_seconds,
             total_steps=data["total_steps"],
             checkpoint_every=data["checkpoint_every"],
             heartbeat_every=data["heartbeat_every"],
