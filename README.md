@@ -27,7 +27,13 @@ Luồng sử dụng: **CLI → Control Plane → máy spot AWS/GCP → Node Agen
 ### 1. Chuẩn bị control plane
 
 - Phát triển trên máy cá nhân: [hướng dẫn Windows 11 và Ubuntu](control-plane/README.local.md).
-- Triển khai server: [hướng dẫn EC2](control-plane/README.md).
+- Triển khai server: [hướng dẫn EC2/RDS](control-plane/README.md).
+- Lưu checkpoint và phân phối agent trong một bucket S3: [tạo S3, IAM và release Node Agent](control-plane/S3_SETUP.md).
+- Chạy job tự động và thay VM khi gián đoạn: [Recovery](control-plane/RECOVERY.md).
+
+Thứ tự deploy cloud: **EC2/RDS → S3 và quyền truy cập → phát hành agent →
+HTTPS cho API → cấu hình Instance Manager/catalog → kiểm tra checkpoint → chạy job**.
+API healthcheck thành công chưa đủ để xác nhận checkpoint/recovery hoạt động.
 
 Để tạo máy thật, server cần cloud credentials, dữ liệu catalog/giá, cấu hình image/network và worker đang chạy. Xem [Instance Manager](control-plane/INSTANCE_MANAGER.md) để cấu hình đầy đủ.
 
@@ -87,6 +93,7 @@ Sau khi SSH vào VM, dùng [`spulti-agent`](node-agent/SSH_JOBS.md) để submit
 | --- | --- |
 | Chọn máy theo giá/rủi ro | [Placement](control-plane/PLACEMENT.md) |
 | Thu thập catalog và giá | [Market collector](control-plane/Market_collector.md) |
+| S3, quyền checkpoint và phát hành agent | [S3 setup](control-plane/S3_SETUP.md) |
 | Vòng đời máy và cấu hình launch | [Instance Manager](control-plane/INSTANCE_MANAGER.md) |
 | API tương tác | `/docs` trên control plane đang chạy |
 | Quy trình phát triển | [CONTRIBUTING.md](CONTRIBUTING.md) |

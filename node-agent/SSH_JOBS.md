@@ -5,7 +5,9 @@ User gửi một file Python cùng số lượt chạy. Agent kiểm tra cú ph�
 ## Chuẩn bị nền tảng một lần
 
 1. Cập nhật code Control Plane, chạy `python -m app.init_db` từ thư mục `control-plane` với môi trường database đang dùng. Nếu dùng Docker Compose: `docker compose exec api python -m app.init_db`. Lệnh tạo thêm bảng `agent_programs` (và `agent_interruptions` nếu chưa có), không sửa cột của bảng hiện có.
-2. Đóng gói/phát hành lại toàn bộ `node-agent/`, bao gồm `submission.py`, `program.py`, `script_worker.py`, `spulti.py`, `interruption.py` và các module hiện có, rồi cài vào `/opt/spulti-agent` trên VM. Các bootstrap hiện vẫn trỏ tới release S3 đã cấu hình; phải cập nhật release/checksum khi triển khai code mới.
+2. Đóng gói/phát hành lại toàn bộ `node-agent/`, bao gồm `submission.py`, `program.py`, `script_worker.py`, `spulti.py`, `interruption.py` và các module hiện có, rồi cài vào `/opt/spulti-agent` trên VM. Làm theo [hướng dẫn phát hành agent và S3](../control-plane/S3_SETUP.md).
+   Managed jobs lấy URL/checksum từ `.env`; script AWS thử nghiệm
+   `bootstrap_node_agent.sh` dùng bucket/key/checksum cố định và phải cập nhật riêng.
 3. Hai mẫu bootstrap AWS/GCP đã thêm launcher `/usr/local/bin/spulti-agent` và đặt provider tương ứng. Nếu VM chưa có launcher, dùng `python3 /opt/spulti-agent/agent.py` thay cho `spulti-agent` trong các lệnh dưới đây.
 
 Luồng `submit` chạy bằng tài khoản SSH, không qua systemd service dành cho demo cố định. Nó không cần `/etc/spulti-agent.env` và không cần cấp trước `job_id`/`SPULTI_AGENT_TOKEN`.

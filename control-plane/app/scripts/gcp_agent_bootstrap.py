@@ -98,6 +98,8 @@ exec /usr/bin/python3 /opt/spulti-agent/agent.py "$@"
 CLI
 chmod 0755 /usr/local/bin/spulti-agent
 
+install -d -o spulti-agent -g spulti-agent -m 0755 /workspace/checkpoints
+
 cat > /etc/systemd/system/spulti-node-agent.service <<'UNIT'
 [Unit]
 Description=Spulti Node Agent
@@ -113,6 +115,7 @@ Group=spulti-agent
 WorkingDirectory=/opt/spulti-agent
 EnvironmentFile=/etc/spulti-agent.env
 Environment=PYTHONUNBUFFERED=1
+Environment=SPULTI_CHECKPOINT_ROOT=/workspace/checkpoints
 Environment=SPULTI_CLOUD_PROVIDER=gcp
 ExecStart=/usr/bin/python3 /opt/spulti-agent/agent.py \
     --job-id ${SPULTI_JOB_ID} \
@@ -128,7 +131,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/spulti-agent
+ReadWritePaths=/var/lib/spulti-agent /workspace/checkpoints
 
 [Install]
 WantedBy=multi-user.target

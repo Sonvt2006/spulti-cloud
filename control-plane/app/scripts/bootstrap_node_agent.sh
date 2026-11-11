@@ -18,8 +18,8 @@ from pathlib import Path
 import boto3
 
 bucket = "spulti-checkpoints"
-key = "agent/releases/v2/node-agent-v2.tar.gz"
-expected = "8dd3f6e4ab779334e6c0185584f12505ccf8ccb8518c8ff316ba726dfacd2aaf"
+key = "agent/releases/v3-files/node-agent-v3-files.tar.gz"
+expected = "18f9e98f2d03ee6d773cee0cb93625d866cfa736a79f92ee9215be0656ed5d14"
 
 with tempfile.TemporaryDirectory() as directory:
     archive_path = Path(directory) / "agent.tar.gz"
@@ -65,6 +65,8 @@ install -d \
     -m 700 \
     /var/lib/spulti-agent
 
+install -d -o spulti-agent -g spulti-agent -m 0755 /workspace/checkpoints
+
 cat > /etc/systemd/system/spulti-node-agent.service <<'UNIT'
 [Unit]
 Description=Spulti Node Agent
@@ -80,6 +82,7 @@ Group=spulti-agent
 WorkingDirectory=/opt/spulti-agent
 EnvironmentFile=/etc/spulti-agent.env
 Environment=PYTHONUNBUFFERED=1
+Environment=SPULTI_CHECKPOINT_ROOT=/workspace/checkpoints
 Environment=SPULTI_CLOUD_PROVIDER=aws
 ExecStart=/usr/bin/python3 /opt/spulti-agent/agent.py --job-id ${SPULTI_JOB_ID} --total-steps ${SPULTI_TOTAL_STEPS} --checkpoint-every ${SPULTI_CHECKPOINT_EVERY} --heartbeat-every ${SPULTI_HEARTBEAT_EVERY} --step-delay 5 --state-dir /var/lib/spulti-agent
 Restart=on-failure
@@ -90,7 +93,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/spulti-agent
+ReadWritePaths=/var/lib/spulti-agent /workspace/checkpoints
 
 [Install]
 WantedBy=multi-user.target

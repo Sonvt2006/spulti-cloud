@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import re
 import signal
 import time
+from pathlib import Path
 
 from checkpoint import CheckpointStore, write_json_atomic
 from config import AgentConfig
 from control_plane import ControlPlaneClient, RemoteError, RetryableRemoteError
+from file_checkpoint import FileCheckpointSync
 from heartbeat import HeartbeatStore
 from interruption import InterruptionMonitor, InterruptionNotice, StopRequest
 from program import ProgramError, PythonProgram, StepInterruptedError
@@ -29,6 +33,7 @@ def _finish_interruption(
     current: int,
     confirmed: int,
     state: int | dict,
+    files: FileCheckpointSync | None = None,
 ) -> int:
     """Always attempt reporting, even when the final checkpoint cannot be saved."""
     assert stop.notice is not None
@@ -37,10 +42,12 @@ def _finish_interruption(
     checkpoint_status = "failed"
     checkpoint_error = None
     try:
+        if files:
+            store.file_snapshot = files.upload(deadline=stop.deadline - 4.0)
         store.save(current, final_status, state)
         local_step = current
-    except (OSError, ValueError):
-        checkpoint_error = "local_save_failed"
+    except (OSError, ValueError, RemoteError):
+        checkpoint_error = "upload_failed" if files else "local_save_failed"
     else:
         if remote:
             try:
@@ -93,6 +100,13 @@ def _finish_interruption(
 
 
 def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int:
+    if (
+        not math.isfinite(config.file_sync_seconds)
+        or not 1 <= config.file_sync_seconds <= 3600
+    ):
+        raise ValueError("file-sync-seconds must be between 1 and 3600")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", config.job_id):
+        raise ValueError("Invalid job ID")
     store = CheckpointStore(
         config.state_dir,
         config.job_id,
@@ -109,6 +123,19 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
         if config.control_plane_url and config.agent_token
         else None
     )
+    files = None
+    files_ready = False
+    if config.checkpoint_dir is not None:
+        if remote is None:
+            raise ValueError(
+                "File checkpoint sync requires Control Plane URL and token"
+            )
+        root = Path(config.checkpoint_dir).absolute() / config.job_id
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        files = FileCheckpointSync(root, remote)
+        if program:
+            program.checkpoint_dir = root
+    interval = config.file_sync_seconds if files else config.checkpoint_seconds
     monitor = InterruptionMonitor(
         config.cloud_provider, config.interruption_poll_interval, stop
     )
@@ -122,7 +149,7 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
     state = load_state(existing)
     confirmed = 0  # Last checkpoint acknowledged by the API, not local disk.
     persisted = current
-    next_checkpoint = time.monotonic() + config.checkpoint_seconds
+    next_checkpoint = time.monotonic() + interval
     next_heartbeat = time.monotonic() + 20.0
 
     def handle_stop(signum: int, _frame: object) -> None:
@@ -130,6 +157,8 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
 
     def checkpoint_now(step: int, status: str, *, periodic: bool = False) -> None:
         nonlocal confirmed, persisted, next_checkpoint
+        if files:
+            store.file_snapshot = files.upload(deadline=time.monotonic() + 45.0)
         store.save(step, status, state)
         persisted = step
         if remote:
@@ -139,7 +168,7 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
             else:
                 remote.save_checkpoint(store.load())
             confirmed = step
-        next_checkpoint = time.monotonic() + config.checkpoint_seconds
+        next_checkpoint = time.monotonic() + interval
 
     def checkpoint_if_due() -> None:
         nonlocal next_checkpoint, next_heartbeat
@@ -151,7 +180,7 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
                 print("[agent] Heartbeat unavailable; will retry", flush=True)
         if stop.event.is_set() or time.monotonic() < next_checkpoint:
             return
-        next_checkpoint = time.monotonic() + config.checkpoint_seconds
+        next_checkpoint = time.monotonic() + interval
         try:
             # This runs on the agent thread: step and result cannot race with
             # completion or interruption saves. An active child only has a copy
@@ -185,6 +214,26 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
                 from_server = remote.get_checkpoint()
                 if from_server is not None:
                     store.validate(from_server)
+                    reference = from_server.get("file_snapshot")
+                    if reference and not files:
+                        raise ValueError(
+                            "This job requires --checkpoint-dir to restore files"
+                        )
+                    if files:
+                        if reference:
+                            files.download(reference, deadline=time.monotonic() + 120.0)
+                        elif from_server["last_completed_step"] > 0 or any(
+                            root.iterdir()
+                        ):
+                            raise ValueError(
+                                "No remote file snapshot for existing "
+                                "progress/files; use a fresh job"
+                            )
+                        # Remote bundle is authoritative after a crash/replacement.
+                        store.restore_remote(from_server)
+                        existing = from_server
+                        current = from_server["last_completed_step"]
+                        state = load_state(from_server)
                     server_step = from_server["last_completed_step"]
                     confirmed = server_step
                     local_step = existing["last_completed_step"] if existing else -1
@@ -208,9 +257,15 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
                         remote.save_checkpoint(existing)
                         confirmed = local_step
                 elif existing is not None:
+                    if files:
+                        raise ValueError(
+                            "Local progress has no committed"
+                            " remote file snapshot; use a fresh job"
+                        )
                     remote.save_checkpoint(existing)
                     confirmed = existing["last_completed_step"]
 
+            files_ready = True
             if existing is not None and existing["status"] == "COMPLETED":
                 print(
                     f"[agent] Job {config.job_id} already COMPLETED; "
@@ -221,7 +276,7 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
                 return 0
 
             persisted = existing["last_completed_step"] if existing else 0
-            next_checkpoint = time.monotonic() + config.checkpoint_seconds
+            next_checkpoint = time.monotonic() + interval
             print(
                 f"[agent] job={config.job_id} RESUME_FROM={persisted} "
                 f"NEXT_STEP={persisted + 1} TOTAL={config.total_steps} "
@@ -315,11 +370,11 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
                     )
                 raise
         except (OSError, ValueError, RemoteError):
-            if not stop.event.is_set():
+            if not stop.event.is_set() or (files and not files_ready):
                 raise
             # A cancelled request during a notice still reaches cleanup.
         return _finish_interruption(
-            config, stop, store, heartbeat, remote, current, confirmed, state
+            config, stop, store, heartbeat, remote, current, confirmed, state, files
         )
     finally:
         monitor.close()

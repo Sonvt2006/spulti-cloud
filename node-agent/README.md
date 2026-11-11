@@ -4,7 +4,11 @@
 
 > Tính tổng bình phương `1² + 2² + ... + N²`, mặc định chờ 5 giây trước mỗi bước. Lưu checkpoint mỗi 10 giây và khi dừng bằng Ctrl+C/SIGTERM, nhận cảnh báo thu hồi hoặc hoàn thành job. Checkpoint lưu bước đã hoàn thành gần nhất và tổng tại bước đó. Agent hỗ trợ local/Control Plane và [phát hiện thu hồi AWS/GCP](INTERRUPTION.md).
 >
-> Độc lập với Docker, RDS, Redis, Celery và cloud credentials. Không tạo VM và không phát sinh chi phí AWS/GCP.
+> Demo local không cần Docker, RDS, Redis, Celery hay cloud credentials và không tạo VM. Chế độ remote dùng Control Plane/S3; tài nguyên cloud có thể phát sinh chi phí.
+
+Triển khai cloud cần [S3 và bản phát hành agent](../control-plane/S3_SETUP.md)
+trước khi chạy checkpoint/resume remote. Xem [Recovery](../control-plane/RECOVERY.md)
+cho luồng tự cài agent và khôi phục job trên VM thay thế.
 
 ## 1. Vị trí trong repo
 

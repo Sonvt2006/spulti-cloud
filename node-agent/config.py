@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -24,6 +24,24 @@ class AgentConfig:
     interruption_poll_interval: float = 2.0
     shutdown_timeout: float = 15.0
     checkpoint_seconds: float = 10.0
+    checkpoint_dir: Path | None = field(
+        default_factory=lambda: (
+            Path(os.environ["SPULTI_CHECKPOINT_ROOT"])
+            if os.getenv("SPULTI_CHECKPOINT_ROOT")
+            else None
+        )
+    )
+    file_sync_seconds: float = 300.0
+
+
+def add_file_checkpoint_args(parser):
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=Path,
+        default=os.getenv("SPULTI_CHECKPOINT_ROOT"),
+        help="Root for per-job file checkpoints (e.g. /workspace/checkpoints)",
+    )
+    parser.add_argument("--file-sync-seconds", type=float, default=300.0)
 
 
 def parse_args(argv: list[str] | None = None) -> AgentConfig:
@@ -69,6 +87,7 @@ def parse_args(argv: list[str] | None = None) -> AgentConfig:
     )
     parser.add_argument("--interruption-poll-interval", type=float, default=2.0)
     parser.add_argument("--shutdown-timeout", type=float, default=15.0)
+    add_file_checkpoint_args(parser)
     args = parser.parse_args(argv)
     token = os.getenv("SPULTI_AGENT_TOKEN")
 

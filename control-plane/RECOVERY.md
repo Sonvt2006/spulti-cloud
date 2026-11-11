@@ -9,11 +9,13 @@ thay thế khi mất hoặc dừng; job gắn với máy được khôi phục t
 1. Cập nhật API, worker, Beat **cùng phiên bản** và chạy `python -m app.init_db`
    trước khi nhận yêu cầu. Hai bảng mới `machine_jobs`, `recovery_runs` được tạo
    bổ sung; không ALTER hay xóa dữ liệu các bảng cũ.
-2. Đóng gói toàn bộ file Python ở gốc `node-agent/` (bao gồm `managed.py`) thành
+2. Làm [hướng dẫn S3 và phát hành agent](S3_SETUP.md) để tạo một bucket dùng chung, cấp quyền
+   checkpoint cho API, upload release và cấp URL HTTPS bền vững.
+   Đóng gói toàn bộ file Python ở gốc `node-agent/` (bao gồm `managed.py`) thành
    archive có `agent.py` ở gốc. Ví dụ từ thư mục gốc repo:
 
    ```sh
-   tar -czf /tmp/node-agent-recovery.tar.gz -C node-agent --exclude=tests --exclude=__pycache__ .
+   tar -czf /tmp/node-agent-recovery.tar.gz --exclude=tests --exclude=__pycache__ --exclude='*.pyc' --exclude=.venv --exclude='.env*' --exclude='.state*' -C node-agent .
    sha256sum /tmp/node-agent-recovery.tar.gz
    ```
 
@@ -31,8 +33,9 @@ thay thế khi mất hoặc dừng; job gắn với máy được khôi phục t
    SPULTI_RECOVERY_MAX_PER_HOUR=5
    ```
 
-   `SPULTI_CHECKPOINT_BUCKET`, image/network allowlist, catalog và giá vẫn cần như
-   Instance Manager. Dùng image Ubuntu 24.04 / Python 3.12 cho installer hiện tại.
+   `SPULTI_CHECKPOINT_BUCKET` và `AWS_REGION` phải trỏ tới bucket dùng chung;
+   kiểm tra đọc/ghi từ API theo [S3 setup](S3_SETUP.md). Image/network allowlist,
+   catalog và giá vẫn cần theo [Instance Manager](INSTANCE_MANAGER.md). Dùng image Ubuntu 24.04 / Python 3.12 cho installer hiện tại.
    API phải truy cập được qua HTTPS từ VM; không đưa API key người dùng vào VM.
    Giữ `JWT_SECRET` ổn định giữa API và worker vì nó dẫn xuất token theo attempt.
    Không đổi secret khi còn attempt đã chuẩn bị/đang chạy; cần rollout/reprovision
