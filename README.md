@@ -1,5 +1,11 @@
 # Spulti-cloud
 
+## Web dashboard
+
+Giao diện tại `/dashboard/`: nhập nhu cầu để chọn máy Spot phù hợp, quản lý máy,
+theo dõi job/checkpoint và so sánh chi phí với On-demand. Xem
+[hướng dẫn dashboard](control-plane/DASHBOARD.md) để chạy cùng control-plane trên EC2.
+
 ## Chạy trên máy cá nhân
 
 Xem [hướng dẫn chạy local trên Windows 11 và Ubuntu](control-plane/README.local.md): cài AWS/GCP CLI và Python SDK, cấu hình credentials, chạy API/worker cùng PostgreSQL local và thử các cloud adapter.

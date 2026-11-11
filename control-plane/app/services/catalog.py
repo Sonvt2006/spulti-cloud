@@ -40,13 +40,13 @@ def find_machine_types(
     if provider is not None:
         query = query.where(MachineType.provider == provider.upper())
     query = query.order_by(MachineType.provider, MachineType.name)
-    if region is not None or zone is not None:
-        conditions = [MachineTypeOffering.machine_type_id == MachineType.id]
+    conditions = [MachineTypeOffering.machine_type_id == MachineType.id]
     if region is not None:
         conditions.append(MachineTypeOffering.region == region)
     if zone is not None:
         conditions.append(MachineTypeOffering.zone == zone)
-    query = query.where(select(MachineTypeOffering.id).where(*conditions).exists())
+    if region is not None or zone is not None:
+        query = query.where(select(MachineTypeOffering.id).where(*conditions).exists())
     return list(db.scalars(query.offset(offset).limit(limit)))
 
 

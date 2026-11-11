@@ -1,5 +1,7 @@
 # Spulti-cloud Control Plane
 
+> Web dashboard: mở `/dashboard/`. Xem [DASHBOARD.md](DASHBOARD.md) để sử dụng giao diện tạo/quản lý máy, cấu hình giá On-demand và hiểu cách tính chi phí.
+
 > Chạy trên laptop Windows 11 hoặc Ubuntu: xem [README.local.md](README.local.md). Hướng dẫn bên dưới dành cho EC2/RDS với `compose.yaml`.
 
 > Quản lý vòng đời máy qua API: xem [Instance Manager](INSTANCE_MANAGER.md) để cấu hình image/network, tạo hai bảng lifecycle mới và chạy Celery beat.

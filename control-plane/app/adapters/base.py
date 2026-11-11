@@ -79,6 +79,7 @@ class SpotPriceQuote:
     zone: str | None
     price_per_hour: Decimal
     effective_at: datetime
+    price_type: str = "SPOT"
 
 
 @dataclass(frozen=True)

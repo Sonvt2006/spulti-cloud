@@ -69,3 +69,11 @@ def make_adapter(provider: str, config: dict) -> CloudAdapter:
     if provider == "GCP":
         return GCPAdapter(**config)
     raise ValueError("Nhà cung cấp không được hỗ trợ")
+
+
+def launch_keys(profiles: list[LaunchProfile]) -> set[tuple[str, str, str, str]]:
+    return {
+        (profile.provider, profile.region, profile.zone, name)
+        for profile in profiles
+        for name in profile.machine_types
+    }

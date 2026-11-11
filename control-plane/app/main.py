@@ -6,6 +6,7 @@ from app.api_keys import router as api_keys_router
 from app.auth import CurrentUser
 from app.auth import router as auth_router
 from app.celery_app import celery_app
+from app.dashboard import router as dashboard_router
 from app.database import get_db
 from app.machines import router as machines_router
 from app.placement import router as placement_router
@@ -13,6 +14,7 @@ from app.services.catalog import find_machine_types
 from app.ssh_keys import router as ssh_keys_router
 from app.submissions import router as submission_router
 from app.tasks import demo_add
+from app.web import install_dashboard
 from celery.result import AsyncResult
 from fastapi import Depends, FastAPI, HTTPException, Query
 from kombu.exceptions import OperationalError
@@ -27,6 +29,8 @@ app.include_router(placement_router)
 app.include_router(agent_router)
 app.include_router(submission_router)
 app.include_router(machines_router)
+app.include_router(dashboard_router)
+install_dashboard(app)
 
 
 class DemoTaskRequest(BaseModel):

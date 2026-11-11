@@ -27,10 +27,10 @@ from app.services.cloud_errors import (
     is_create_rejected,
     is_not_found,
 )
-from app.services.launch_config import load_launch_profiles, make_adapter
+from app.services.launch_config import launch_keys, load_launch_profiles, make_adapter
 from app.services.managed_agent import agent_settings, attempt_token, startup_script
 from app.services.placement import PlacementRequest, rank_candidates
-from pydantic import Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -40,11 +40,19 @@ POLL_SECONDS = 30
 MAX_FAILURES = 5
 
 
+class PreferredCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    machine_type_id: int = Field(gt=0)
+    region: str = Field(min_length=1, max_length=50)
+    zone: str = Field(min_length=1, max_length=50)
+
+
 class MachineRequest(PlacementRequest):
     name: str = Field(min_length=1, max_length=100)
     disk_size_gb: int = Field(default=30, ge=1, le=65536)
     startup_script: str = Field(default="", max_length=8000)
     job_id: UUID | None = None
+    preferred_candidate: PreferredCandidate | None = None
 
     @field_validator("name")
     @classmethod
@@ -126,12 +134,35 @@ def _prepare_attempts(
     placement = PlacementRequest.model_validate(
         payload.model_dump(include=set(PlacementRequest.model_fields))
     )
-    candidates = rank_candidates(db, placement, exclusions=exclusions)
+    candidates = rank_candidates(
+        db, placement, exclusions=exclusions, allowed_keys=launch_keys(profiles)
+    )
     position = db.scalar(
         select(func.max(InstanceAttempt.position)).where(
             InstanceAttempt.machine_id == machine.id
         )
     )
+    # Preference affects initial placement only. Recovery re-ranks the original
+    # resource requirements and keeps cross-cloud failover available.
+    if (
+        payload.preferred_candidate is not None
+        and exclusions is None
+        and position is None
+    ):
+        preferred = payload.preferred_candidate
+        chosen = next(
+            (
+                candidate
+                for candidate in candidates
+                if (candidate.machine_type_id, candidate.region, candidate.zone)
+                == (preferred.machine_type_id, preferred.region, preferred.zone)
+            ),
+            None,
+        )
+        if chosen is None:
+            raise ManagerError(409, "Đề xuất đã thay đổi; hãy tìm cấu hình lại")
+        candidates.remove(chosen)
+        candidates.insert(0, chosen)
     position = (position or 0) + 1
     added = 0
     for candidate in candidates:
@@ -214,7 +245,8 @@ def create_machine(
         )
     )
     if existing:
-        if existing.request_payload != data:
+        previous = MachineRequest.model_validate(existing.request_payload)
+        if previous.model_dump(mode="json") != data:
             raise ManagerError(409, "Idempotency-Key đã được dùng với cấu hình khác")
         return db.get_one(Machine, existing.machine_id)
     try:

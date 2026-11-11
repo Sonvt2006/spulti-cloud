@@ -74,6 +74,7 @@ def rank_candidates(
     quota_available: Callable[[PlacementCandidate], bool] | None = None,
     default_risk: Decimal = Decimal("0.5"),
     saving_max_risk: Decimal = Decimal("0.2"),
+    allowed_keys: set[CandidateKey] | None = None,
 ) -> list[PlacementCandidate]:
     """Điểm nhỏ hơn tốt hơn; giữ thứ tự để worker thử ứng viên tiếp theo.
 
@@ -136,6 +137,8 @@ def rank_candidates(
         scope = (machine.id, offering.region, offering.zone)
         regional_scope = (machine.id, offering.region, None)
         key = (machine.provider, offering.region, offering.zone, machine.name)
+        if allowed_keys is not None and key not in allowed_keys:
+            continue
         until = (exclusions or {}).get(key)
         if until is not None and _utc(until) > now:
             continue

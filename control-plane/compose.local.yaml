@@ -1,6 +1,14 @@
 # Standalone local stack. Do not merge with compose.yaml (the EC2 stack).
 name: spulti-local
 
+# API stores checkpoints on S3; worker calls EC2/Pricing. Both need credentials.
+x-aws-env: &aws-env
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+  AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+  AWS_EC2_METADATA_DISABLED: "true"
+
 x-app: &app
   image: spulti-control-plane:local
   build: .
@@ -60,6 +68,8 @@ services:
 
   api:
     <<: *app
+    environment:
+      <<: [*app-env, *aws-env]
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test:
@@ -75,12 +85,7 @@ services:
   worker:
     <<: *app
     environment:
-      <<: *app-env
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
-      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
-      AWS_EC2_METADATA_DISABLED: "true"
+      <<: [*app-env, *aws-env]
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-credentials.json
     volumes:
       - type: bind

@@ -57,8 +57,14 @@ def collect_market_data(provider: str, dataset: str) -> dict:
     """Collect either prices (hourly) or risks (daily), with an overlap guard."""
     provider = provider.upper()
     dataset = dataset.lower()
-    if provider not in {"AWS", "GCP"} or dataset not in {"prices", "risks"}:
+    if provider not in {"AWS", "GCP"} or dataset not in {
+        "prices",
+        "risks",
+        "on_demand",
+    }:
         raise ValueError(f"Invalid market collection request: {provider}/{dataset}")
+    if dataset == "on_demand" and provider != "AWS":
+        raise ValueError("Automatic on-demand collection currently supports AWS")
 
     from app.services.market_data_collector import collect_aws, collect_gcp
 
@@ -73,6 +79,13 @@ def collect_market_data(provider: str, dataset: str) -> dict:
             return {"status": "skipped", "provider": provider, "dataset": dataset}
         try:
             limit = _market_limit()
+            if dataset == "on_demand":
+                from app.services.on_demand_pricing import collect_aws_on_demand
+
+                regions = _csv_env("MARKET_AWS_REGIONS", "us-east-1")
+                if not regions:
+                    raise ValueError("MARKET_AWS_REGIONS cannot be empty")
+                return collect_aws_on_demand(regions, limit)
             if provider == "AWS":
                 regions = _csv_env("MARKET_AWS_REGIONS", "us-east-1")
                 if not regions:

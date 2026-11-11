@@ -1,5 +1,79 @@
 # Chạy Spulti-cloud local trên Windows 11 và Ubuntu
 
+**Dashboard:** [http://localhost:8080/dashboard/](http://localhost:8080/dashboard/).
+Giao diện và API được phục vụ chung bởi FastAPI qua Nginx; không cần `npm install`,
+`npm run dev` hoặc một frontend server riêng. Nếu đổi `LOCAL_HTTP_PORT`, thay
+`8080` trong các URL bên dưới bằng cổng đã chọn.
+
+### Chạy nhanh khi máy đã chuẩn bị theo mục 1–7
+
+Từ thư mục gốc repo, mở PowerShell hoặc Bash và chuyển vào `control-plane`.
+Giữ nguyên `.env.local` và các volume đã có; **không copy đè file env hoặc sinh
+lại JWT secret mỗi lần khởi động**.
+
+```text
+cd control-plane
+docker version
+docker compose --env-file .env.local -f compose.local.yaml config --quiet
+docker compose --env-file .env.local -f compose.local.yaml build api
+docker compose --env-file .env.local -f compose.local.yaml up -d --wait postgres redis
+docker compose --env-file .env.local -f compose.local.yaml run --rm --no-deps api python -m app.init_db
+docker compose --env-file .env.local -f compose.local.yaml run --rm --no-deps --user root worker chown 10001:10001 /var/lib/spulti-tests
+docker compose --env-file .env.local -f compose.local.yaml up -d --wait
+docker compose --env-file .env.local -f compose.local.yaml ps
+```
+
+`build api` cập nhật image dùng chung cho API, worker và beat. Chỉ chạy lệnh tiếp
+theo nếu lệnh trước thành công. Trên Windows cần mở Docker Desktop và chờ Linux
+Engine sẵn sàng trước `docker version`. `init_db` tạo bảng còn thiếu, giữ dữ liệu
+cũ; không phải lệnh reset database.
+
+Mở dashboard, chọn **Đăng ký** nếu chưa có tài khoản local, rồi đăng nhập. Dữ liệu
+máy lúc đầu có thể trống; để có đề xuất/tạo VM thật, làm tiếp mục **8.3–8.5**.
+Đăng nhập và xem dashboard không cần AWS/GCP credentials, launch profile hay S3;
+các chức năng cloud cần được cấu hình tương ứng. Trước khi chạy/recreate API và
+worker có dùng AWS, export credentials trong cùng terminal theo mục 5.2.
+
+Nếu chỉ cần mở dashboard trước khi chuẩn bị GCP credentials/public key mount,
+thay hai lệnh `chown` và `up -d --wait` cuối bằng:
+
+```text
+docker compose --env-file .env.local -f compose.local.yaml up -d --wait api nginx
+```
+
+Chế độ này có database/Redis/API/giao diện; worker và beat chưa chạy nên chưa xử
+lý tạo máy hoặc task. Khi các file mount sẵn sàng, quay lại chuỗi lệnh đầy đủ.
+
+### Các thành phần đang chạy ở đâu?
+
+| Thành phần | Local | Production |
+| --- | --- | --- |
+| Dashboard / Nginx | `localhost:8080/dashboard/`, Nginx chuyển tiếp vào API | Cùng domain control-plane trên EC2 |
+| FastAPI | Container `api:8000`; không cần mở cổng 8000 ra host | Container trên EC2 |
+| Database | Container `postgres:5432`, volume `postgres_data` | RDS PostgreSQL |
+| Queue / kết quả task | Container `redis:6379`, volume `redis_data` | Redis của control-plane |
+| Thực thi / đồng bộ VM | Celery `worker` | Celery trên EC2 |
+| Lịch quét / thu thập giá | Một Celery `beat` | Một Celery beat trên EC2 |
+| Checkpoint | S3 thật nếu cấu hình bucket; metadata ở PostgreSQL local | S3, metadata ở RDS |
+| VM Spot / node-agent | VM trên AWS/GCP; agent được cài khi tạo managed job | Tương tự |
+
+```mermaid
+flowchart LR
+    Browser[Browser localhost:8080] --> Nginx[Nginx]
+    Nginx --> API[FastAPI: dashboard và API]
+    API --> DB[(PostgreSQL local)]
+    API --> Redis[Redis]
+    Beat[Celery beat] --> Redis
+    Redis --> Worker[Celery worker]
+    Worker --> DB
+    Worker --> VM[VM Spot AWS/GCP]
+    VM --> Agent[Node-agent]
+    Agent --> API
+    API --> S3[(S3 checkpoint)]
+```
+
+Chi tiết tính chi phí và các trang giao diện: [DASHBOARD.md](DASHBOARD.md).
+
 API quản lý vòng đời máy: xem [Instance Manager](INSTANCE_MANAGER.md) để cấu hình
 image/network, tạo bảng mới bằng `app.init_db` và chạy Celery beat (đã thêm vào Compose).
 
@@ -26,13 +100,13 @@ Thông tin GCP của nhóm:
 | Docker + Compose | Chạy toàn bộ control plane và database local. Windows dùng Linux containers. |
 | Python trên host | Chỉ cần nếu muốn IDE nhận thư viện, chạy Python riêng hoặc cài `spulti` CLI; hướng dẫn dùng Python 3.12 giống Dockerfile. |
 
-`compose.yaml` hiện dành cho EC2: mount `/etc/spulti/secrets/gcp-credentials.json`, `/etc/spulti/ssh/spulti-gcp-test.pub`, `/var/lib/spulti-tests` và lấy URL database từ `.env`. Laptop không tự có các file hay IAM role của EC2.
+`compose.yaml` hiện dành cho EC2: mount `/etc/spulti/secrets/gcp-credentials.json`, `/var/lib/spulti-tests` và lấy URL database từ `.env`. Laptop không tự có các file hay IAM role của EC2.
 
 Hướng dẫn này dùng **`compose.local.yaml` độc lập** và **`.env.local`**:
 
 - Database dùng service `postgres`, không dùng RDS hay dữ liệu chung của nhóm.
 - Truy cập API qua `http://localhost:8080`; chỉ bind cổng HTTP vào `127.0.0.1`.
-- AWS credentials được truyền từ terminal vào worker. GCP credentials được mount từ `control-plane/.local/gcp-credentials.json`.
+- AWS credentials được truyền từ terminal vào **API và worker**. API đọc/ghi checkpoint S3; worker gọi EC2/Pricing. GCP credentials chỉ mount vào worker từ `control-plane/.local/gcp-credentials.json`.
 - Bên trong worker, đường dẫn GCP vẫn là `/run/secrets/gcp-credentials.json`. Không đặt đường dẫn Windows vào `GOOGLE_APPLICATION_CREDENTIALS` của container.
 - PostgreSQL, Redis và state thử AWS nằm trong các Docker volume của project `spulti-local`.
 
@@ -247,7 +321,7 @@ Dùng một profile riêng nếu muốn giữ cả cấu hình IAM user và SSO,
 
 </details>
 
-### 5.2. Truyền credentials vào Docker worker
+### 5.2. Truyền credentials vào Docker API và worker
 
 Chạy trong **cùng terminal sẽ dùng Compose**, mỗi khi mở terminal mới, đổi key hoặc credentials tạm thời hết hạn. Đoạn dưới lấy credentials từ profile nhưng không in secret ra terminal:
 
@@ -278,10 +352,10 @@ Chỉ tiếp tục nếu export thành công. CLI v2 hỗ trợ [export credenti
 Credentials tạm thời trong environment container **không tự làm mới**. Sau khi đăng nhập/export lại, cập nhật worker bằng:
 
 ```text
-docker compose --env-file .env.local -f compose.local.yaml up -d --force-recreate worker
+docker compose --env-file .env.local -f compose.local.yaml up -d --force-recreate api worker nginx
 ```
 
-`restart worker` không cập nhật environment. Người có quyền quản trị Docker có thể đọc environment container; không chia sẻ output `docker inspect` hay `docker compose config` có chứa credentials. Dùng `config --quiet` khi chỉ kiểm tra cú pháp.
+`restart` không cập nhật environment. Recreate cả API để checkpoint S3 nhận credentials mới; chạy cùng Nginx để proxy nhận lại địa chỉ container API. Người có quyền quản trị Docker có thể đọc environment container; không chia sẻ output `docker inspect` hay `docker compose config` có chứa credentials. Dùng `config --quiet` khi chỉ kiểm tra cú pháp.
 
 Nếu worker đã chạy, kiểm tra danh tính bên trong container (nếu chưa triển khai stack, làm bước 6–8 trước):
 
@@ -289,7 +363,7 @@ Nếu worker đã chạy, kiểm tra danh tính bên trong container (nếu chư
 docker compose --env-file .env.local -f compose.local.yaml exec worker python -c "import boto3; r=boto3.client('sts', region_name='us-east-1').get_caller_identity(); print(r['Account']); print(r['Arn'])"
 ```
 
-Account/Arn phải khớp danh tính đã kiểm tra trên host. Chuỗi cấu hình là: **IAM user → access key → profile trên laptop → biến môi trường terminal → Docker worker → Boto3 gọi AWS**.
+Account/Arn phải khớp danh tính đã kiểm tra trên host. Có thể thay `exec worker` bằng `exec api` để kiểm tra danh tính dùng cho checkpoint S3. Chuỗi cấu hình là: **IAM user → access key → profile trên laptop → biến môi trường terminal → Docker API/worker → Boto3 gọi AWS**.
 
 ## 6. Cấu hình GCP với service account của nhóm
 
@@ -418,6 +492,7 @@ Lệnh `chown` chỉ chuẩn bị quyền ghi volume state cho worker UID `10001
 
 Mở:
 
+- [Dashboard](http://localhost:8080/dashboard/): giao diện đăng nhập/đăng ký, tổng quan, tạo máy, danh sách/chi tiết máy và SSH keys.
 - [Healthcheck](http://localhost:8080/health): dự kiến `{"status":"ok","service":"spulti-api"}`.
 - [Swagger UI](http://localhost:8080/docs): thử API đăng ký, đăng nhập và task.
 
@@ -429,7 +504,163 @@ Healthcheck chỉ chứng minh API phản hồi. Để kiểm tra cả database 
 4. `POST /api/tasks/demo` với `{"a":15,"b":27}`; nhận `task_id`.
 5. Sau khoảng 5 giây, `GET /api/tasks/{task_id}` phải có `status: SUCCESS` và `result.result: 42`.
 
-Để nạp dữ liệu mẫu tùy chọn, đọc `app/seed.py` trước rồi chạy `docker compose --env-file .env.local -f compose.local.yaml run --rm --no-deps api python -m app.seed`.
+Không dùng `app.seed` để chuẩn bị báo giá hoặc đăng nhập dashboard: tài khoản
+`spulti_demo` trong seed bị vô hiệu hóa, giá là minh họa và chưa có offerings/lifecycle
+để tạo VM thật. Tài khoản mới chỉ nhìn thấy máy của chính mình. Nạp catalog/giá
+thật theo mục 8.3–8.4 bên dưới.
+
+### 8.1. Kiểm tra cả hệ thống sau khi khởi động
+
+```text
+docker compose --env-file .env.local -f compose.local.yaml ps
+docker compose --env-file .env.local -f compose.local.yaml exec worker celery -A app.celery_app:celery_app inspect ping --timeout=5
+docker compose --env-file .env.local -f compose.local.yaml logs --tail=50 api worker beat nginx
+```
+
+Cần thấy 6 service đang chạy; PostgreSQL, Redis, API có healthcheck. Worker cần
+trả `pong`; beat có log bắt đầu scheduler. `up --wait` không thay thế kiểm tra
+task thực thi: dùng task demo `15 + 27 = 42` ở trên để kiểm tra xuyên suốt
+API → Redis → worker → result backend.
+
+### 8.2. Đăng ký tài khoản và thêm SSH key trên dashboard
+
+1. Mở `/dashboard/`, chọn **Đăng ký**; tài khoản ở đây nằm trong PostgreSQL local.
+   Tài khoản đã tạo ở EC2/RDS không tự xuất hiện trong DB local.
+2. Đăng nhập, mở **SSH public keys**, đặt tên và dán nội dung file `.pub` của bạn.
+   Ví dụ dùng `Get-Content "$env:USERPROFILE\.ssh\spulti-gcp-local.pub"` trên
+   PowerShell hoặc `cat ~/.ssh/spulti-gcp-local.pub` trên Ubuntu.
+3. Chỉ dán public key. File `.local/spulti-gcp-test.pub` mount cho script adapter
+   **không tự đăng ký key cho tài khoản dashboard**.
+
+### 8.3. Cấu hình những loại máy được phép tạo
+
+Mở `.env.local`, thêm `SPULTI_LAUNCH_CONFIG` với image/network đã xác minh trong
+account của bạn. Ví dụ dưới đây chỉ mô tả cấu trúc; thay các `REPLACE` trước khi
+dùng. Có thể chỉ giữ profile AWS hoặc chỉ GCP.
+
+```dotenv
+SPULTI_LAUNCH_CONFIG='[{"provider":"AWS","region":"ap-southeast-1","zone":"ap-southeast-1a","image_id":"ami-091b599f5f318ddd2","machine_types":["t3.small"],"subnet_id":"subnet-0b1f44552bf10c0e2","security_group_ids":["sg-0a0048e08cfecf26b"]},{"provider":"GCP","region":"asia-southeast1","zone":"asia-southeast1-b","image_id":"projects/spulti-cloud/global/images/REPLACE","machine_types":["e2-standard-4"],"project_id":"spulti-cloud","subnetwork":"projects/spulti-cloud/regions/asia-southeast1/subnetworks/spulti-test-subnet"}]'
+SPULTI_MAX_MACHINES_PER_USER=5
+MARKET_AWS_REGIONS=us-east-1
+MARKET_GCP_PROJECT_ID=spulti-cloud
+MARKET_GCP_REGION=asia-southeast1
+MARKET_GCP_ZONES=asia-southeast1-b
+MARKET_LIMIT_TYPES=
+```
+
+AWS AMI phải đúng region/kiến trúc; subnet phải nằm trong zone chỉ định và security
+group cùng VPC. Dùng image hỗ trợ cloud-init. Với managed job, installer hiện tại
+dùng Ubuntu 24.04/Python 3.12. Đọc thêm [INSTANCE_MANAGER.md](INSTANCE_MANAGER.md).
+
+`MARKET_LIMIT_TYPES` để trống nghĩa là thu thập tất cả type trong catalog; nếu đặt
+số thì giới hạn theo thứ tự tên, có thể bỏ qua type bạn cần. Lệnh đồng bộ ở dưới
+chỉ nạp những type trong launch allowlist để giữ catalog ban đầu gọn. Nó không
+xóa các type đã có từ trước.
+
+Sau khi sửa env, trong terminal đã export AWS credentials nếu dùng AWS:
+
+```text
+docker compose --env-file .env.local -f compose.local.yaml up -d --force-recreate api worker beat nginx
+docker compose --env-file .env.local -f compose.local.yaml exec worker python -m app.scripts.sync_launch_catalog
+```
+
+`sync_launch_catalog` đọc API catalog của cloud và ghi specs/offerings thật vào
+PostgreSQL; **không tạo VM**. Script xác minh type có cung cấp trong zone đã chọn,
+chỉ nhập type nằm trong `SPULTI_LAUNCH_CONFIG`, chạy lại không tạo bản ghi trùng.
+Có thể thêm `--provider AWS` hoặc `--provider GCP` để chỉ đồng bộ một phía.
+Chạy lại sau khi thêm loại máy/zone vào cấu hình. Đây chưa phải kiểm tra capacity,
+quota hoặc xác nhận image/subnet tạo được máy.
+
+### 8.4. Thu thập giá để có danh sách đề xuất và so sánh chi phí
+
+Đồng bộ catalog trước, sau đó gửi task cho provider đã cấu hình. Dùng Python
+string dưới đây để lệnh chạy như nhau trên PowerShell/Bash, tránh lỗi quote JSON
+của native command trên Windows:
+
+```text
+docker compose --env-file .env.local -f compose.local.yaml exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data.delay('AWS', 'prices').id)"
+docker compose --env-file .env.local -f compose.local.yaml exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data.delay('AWS', 'risks').id)"
+docker compose --env-file .env.local -f compose.local.yaml exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data.delay('AWS', 'on_demand').id)"
+```
+
+Nếu dùng GCP:
+
+```text
+docker compose --env-file .env.local -f compose.local.yaml exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data.delay('GCP', 'prices').id)"
+docker compose --env-file .env.local -f compose.local.yaml exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data.delay('GCP', 'risks').id)"
+```
+
+Lệnh trả task ID, không có nghĩa đã thu thập xong. Xem `logs --tail=100 worker`
+hoặc `GET /api/tasks/{task_id}` trong Swagger sau đăng nhập. Kiểm tra kết quả có
+`prices_saved`/`risks_saved`, không chỉ `status: SUCCESS`: kết quả `empty` có thể
+do catalog trống; số bản ghi mới bằng 0 cũng có thể vì đã thu thập trước đó.
+
+Collector AWS On-demand cần `pricing:GetProducts`; collector Spot/catalog cần
+các quyền EC2 đọc tương ứng; GCP cần quyền đọc catalog và capacity history mà
+adapter sử dụng. Tài khoản có credentials nhưng thiếu quyền vẫn không lấy được
+giá. Beat duy trì giá Spot mỗi 15 phút; risk cập nhật hằng ngày; AWS On-demand
+lúc 00:50 UTC. Chỉ chạy một beat cho stack.
+
+GCP chưa có collector On-demand tự động. Giá thiếu hiển thị `—`, không coi là 0.
+Chi phí lịch sử là ước tính compute từ lúc instance được control-plane ghi nhận,
+không gồm disk/mạng/S3/RDS/control-plane hoặc hóa đơn cloud thực tế. Nếu chỉ mới
+thu thập giá, khoảng lịch sử cũ có thể chưa đủ giá để tính tổng.
+
+### 8.5. Tạo, theo dõi và xóa máy bằng dashboard
+
+1. Chọn **Tạo máy mới**, nhập tên, vCPU/RAM tối thiểu, GPU nếu cần, disk, provider,
+   region/zone và chế độ tối ưu. Khi thử lần đầu có thể chọn **Cân bằng**; chế độ
+   Tiết kiệm loại ứng viên có chỉ số rủi ro cao hoặc thiếu dữ liệu theo policy.
+2. Chọn **Tìm máy phù hợp**. Kết quả phải đồng thời thỏa nhu cầu, có offering,
+   có giá Spot và nằm trong launch allowlist. Chọn cấu hình, xem so sánh giá.
+3. Bấm **Tạo máy Spot** để gửi yêu cầu tạo VM thật. Cả ba chế độ đều tạo Spot;
+   On-demand chỉ là giá tham chiếu. Số giờ dự kiến không tự tắt máy.
+4. Trong chi tiết máy, theo dõi `PENDING → PROVISIONING → RUNNING`, IP/lệnh SSH,
+   chi phí và lịch sử instance. `RUNNING` chưa bảo đảm cloud-init/SSH/job sẵn sàng.
+   Ví dụ thêm `-i <private-key>` khi chạy lệnh SSH; username mặc định là `spulti`.
+5. Khi xong, bấm **Xóa máy** và chờ `DELETED`; kiểm tra cloud khi có lỗi. Bấm
+   **Thử lại** sau khi đã sửa lỗi cấu hình/quyền/capacity. Nếu mất phản hồi lúc
+   tạo, dùng yêu cầu đã lưu để gửi lại cùng mã, không tạo yêu cầu mới ngay.
+
+Các VM tạo bằng `try_aws_adapter`/`try_gcp_adapter` ở mục 9 không có lifecycle
+trong DB ứng dụng, nên không xuất hiện như máy do dashboard quản lý. Dùng luồng
+dashboard/API ở mục này để có lịch sử và tính chi phí trong giao diện.
+
+### 8.6. Job, node-agent và checkpoint S3 khi control-plane ở laptop
+
+Tạo VM không gắn job chỉ cần cấu hình các bước trên. Để agent chạy workload và
+khôi phục từ checkpoint, cần thêm cấu hình:
+
+```dotenv
+SPULTI_CHECKPOINT_BUCKET=<bucket-checkpoint-da-chuan-bi>
+AWS_REGION=<region-cua-bucket>
+SPULTI_PUBLIC_API_URL=https://<dia-chi-cong-khai-dan-ve-control-plane>
+SPULTI_AGENT_RELEASE_URL=https://<dia-chi-archive-agent-bat-bien>/node-agent.tar.gz
+SPULTI_AGENT_RELEASE_SHA256=<sha256-64-ky-tu>
+```
+
+`AWS_REGION` ở đây là region của S3 bucket, có thể khác `MARKET_AWS_REGIONS` hoặc
+region VM. API cần quyền `s3:PutObject`/`s3:GetObject` trên checkpoint prefix và
+quyền KMS tương ứng nếu bucket dùng KMS. API là thành phần gọi S3; node-agent gửi
+checkpoint qua API, không giữ AWS credentials. Sau khi đổi/export credentials,
+recreate **API và worker** như mục 5.2.
+
+`http://localhost:8080` chỉ dùng từ laptop. `localhost` trên VM là chính VM đó;
+VM AWS/GCP không truy cập được API laptop qua URL này. Cần endpoint HTTPS có thể
+truy cập từ VM, chuyển tiếp về Nginx local bằng hạ tầng/tunnel đã được cấu hình,
+và giữ laptop/kết nối hoạt động. Code hiện từ chối URL HTTP cho managed job.
+Không tự public API hay tạo tunnel khi chỉ muốn xem dashboard local.
+
+Đóng gói agent và thiết lập release theo [RECOVERY.md](RECOVERY.md). Tạo job hoặc
+submission bằng CLI/API, rồi nhập **Job ID** thuộc tài khoản vào phần nâng cao
+của form tạo máy. Có thể tạo job demo trong Swagger bằng `POST /api/agent/jobs`
+với `total_steps`, `checkpoint_every`, `heartbeat_every`; response có `job_id`.
+Không dán agent token vào form. Worker cấp token riêng cho mỗi attempt và cài
+agent bằng systemd. Chi tiết máy hiển thị heartbeat, tiến độ, checkpoint step,
+S3 bucket/key và recovery history sau khi agent báo về.
+
+Mô hình local không tự cung cấp S3 giả lập. Chỉ xem dashboard hoặc tạo máy không
+gắn job thì có thể để các biến bucket/public URL/agent release trống.
 
 ### Kiểm tra SDK và credentials ngay trong worker
 
@@ -556,7 +787,7 @@ docker compose --env-file .env.local -f compose.local.yaml up -d --build
 docker compose --env-file .env.local -f compose.local.yaml down
 ```
 
-Source được copy lúc build, không mount trực tiếp; sửa Python cần `up -d --build`. Trước mỗi lần `up` có thể recreate worker, bảo đảm terminal vẫn có AWS credentials. `down` giữ dữ liệu volume; tránh `down -v` khi còn cần DB hoặc state truy vết VM.
+Source được copy lúc build, không mount trực tiếp; sửa Python **hoặc HTML/JS/CSS** cần `up -d --build`. Không có `npm run dev` cho dashboard này. Trước mỗi lần `up` có thể recreate API/worker, bảo đảm terminal vẫn có AWS credentials nếu dùng cloud. `down` giữ dữ liệu volume; tránh `down -v` khi còn cần DB hoặc state truy vết VM.
 
 | Triệu chứng | Cách xử lý |
 | --- | --- |
@@ -566,7 +797,7 @@ Source được copy lúc build, không mount trực tiếp; sửa Python cần 
 | `IsADirectoryError` với credentials hoặc SSH public key | Đích mount trên host đang là thư mục, hoặc container còn giữ mount cũ. Đổi tên thư mục đó để giữ bản dự phòng, copy file thật bên trong ra đúng đường dẫn đích rồi kiểm tra bằng bước 8. Export lại AWS credentials và chạy `docker compose --env-file .env.local -f compose.local.yaml up -d --no-deps --force-recreate worker` để nhận mount mới. |
 | `Permission denied` với JSON/public key | Kiểm tra quyền file cho UID `10001`; Ubuntu dùng thư mục `.local` `700`, hai file mount `644`. Không đổi private SSH key thành `644`. |
 | `Permission denied` với AWS state | Chạy lại lệnh `chown` volume ở bước 8. |
-| `NoCredentialsError` / `ExpiredToken` | Đăng nhập AWS, export lại trong terminal hiện tại và `up -d --force-recreate worker`. |
+| `NoCredentialsError` / `ExpiredToken` | Đăng nhập AWS, export lại trong terminal hiện tại và `up -d --force-recreate api worker nginx`; API cũng cần credentials cho S3. |
 | GCP `DefaultCredentialsError` / `invalid_grant` | Kiểm tra file đúng loại, login ADC và copy lại nếu phiên đã hết hiệu lực; recreate worker. |
 | GCP `iam.serviceAccounts.getAccessToken` bị từ chối | Kiểm tra Token Creator trên đúng service account và IAM Credentials API. |
 | GCP/AWS `403`, `AccessDenied` khi tạo VM | Xác thực thành công chưa đủ; kiểm tra quyền tài nguyên, org policy, subnet/image và quota. |
@@ -575,5 +806,11 @@ Source được copy lúc build, không mount trực tiếp; sửa Python cần 
 | `connection refused` tới DB hoặc `relation does not exist` | Chờ `postgres` healthy, chạy `app.init_db`; không dùng URL RDS hoặc `localhost` cho DB bên trong container. |
 | Cổng `8080` đang dùng | Đổi `LOCAL_HTTP_PORT` trong `.env.local`, chạy `up -d` và cập nhật URL API/CLI. |
 | Task không thoát `PENDING` | Kiểm tra worker/Redis và log; `/health` không kiểm tra worker. |
+| `/dashboard/` trả 404 hoặc giao diện cũ | Dùng đúng `localhost:8080`; build lại image API và recreate API/Nginx. Static assets nằm trong image; refresh trình duyệt sau khi cập nhật. |
+| Tạo máy báo chưa cấu hình launch | Thêm `SPULTI_LAUNCH_CONFIG` vào `.env.local`, recreate API/worker, không chỉ `restart`. |
+| Không có đề xuất | Kiểm tra catalog/offerings theo mục 8.3, giá Spot theo mục 8.4, region/zone khớp launch profile và tài nguyên tối thiểu. Mở rộng bộ lọc hoặc dùng Cân bằng. |
+| Chi phí/giá On-demand hiện `—` | Chưa có giá cho type/region/khoảng thời gian đó; chạy collector AWS On-demand và kiểm tra quyền Pricing. GCP chưa có collector On-demand. |
+| Checkpoint báo storage unavailable | Kiểm tra bucket/region và credentials/quyền S3 của **API**, không chỉ worker. |
+| VM chạy nhưng job không heartbeat | Kiểm tra `SPULTI_PUBLIC_API_URL` truy cập được từ VM qua HTTPS, agent archive/hash, cloud-init và systemd agent; `localhost:8080` trên VM không trỏ về laptop. |
 
 Chạy xong một vòng thử cloud: xác nhận VM đã xóa/terminate, kiểm tra tài nguyên còn sót trên console rồi mới dừng stack. Cài SDK và xác thực không tự tạo subnet, security group, key pair hoặc cấp IAM cho thành viên.

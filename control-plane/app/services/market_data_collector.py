@@ -55,6 +55,8 @@ def save_market_data(data: MarketData, *, dry_run: bool = False) -> dict[str, in
         }
 
         for item in data.prices:
+            if item.price_type not in {"SPOT", "ON_DEMAND"}:
+                raise ValueError("Unsupported price type")
             mid = type_ids.get((item.provider, item.machine_type))
             if mid is None:
                 results["unknown_types"] += 1
@@ -65,7 +67,7 @@ def save_market_data(data: MarketData, *, dry_run: bool = False) -> dict[str, in
                     SpotPrice.machine_type_id == mid,
                     SpotPrice.region == item.region,
                     SpotPrice.zone == item.zone,
-                    SpotPrice.price_type == "SPOT",
+                    SpotPrice.price_type == item.price_type,
                     SpotPrice.recorded_at == item.effective_at,
                 )
                 .limit(1)
@@ -76,7 +78,7 @@ def save_market_data(data: MarketData, *, dry_run: bool = False) -> dict[str, in
                         machine_type_id=mid,
                         region=item.region,
                         zone=item.zone,
-                        price_type="SPOT",
+                        price_type=item.price_type,
                         price_per_hour=item.price_per_hour,
                         recorded_at=item.effective_at,
                     )
