@@ -29,7 +29,8 @@ def agent_settings() -> tuple[str, str, str]:
     base = os.getenv("SPULTI_PUBLIC_API_URL", "").rstrip("/")
     release = os.getenv("SPULTI_AGENT_RELEASE_URL", "")
     digest = os.getenv("SPULTI_AGENT_RELEASE_SHA256", "").lower()
-    for value in (base, release) if require_api else (release,):
+    # Every VM contacts the API, including idle nodes without a job.
+    for value in (base, release):
         url = urlparse(value)
         if (
             url.scheme != "https"
@@ -39,12 +40,8 @@ def agent_settings() -> tuple[str, str, str]:
             or url.fragment
             or any(c.isspace() for c in value)
         ):
-            raise ValueError(
-                "Managed jobs require HTTPS API and agent release URLs"
-                if require_api
-                else "Agent installation requires an HTTPS release URL"
-            )
-    if require_api and urlparse(base).query:
+            raise ValueError("Agent installation requires valid HTTPS URLs")
+    if urlparse(base).query:
         raise ValueError("API URL must not contain a query string")
 
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
@@ -84,14 +81,7 @@ def startup_script(
             "SPULTI_AGENT_TOKEN": attempt_token(request_id),
             "SPULTI_JOB_ID": job_id,
         }
-        env_text = (
-            "\n".join(f"{key}={json.dumps(value)}" for key, value in config.items())
-            + "\n"
-        )
-        encoded = base64.b64encode(env_text.encode()).decode()
-        env_bootstrap = (
-            f"printf %s {shlex.quote(encoded)} | base64 -d > /etc/spulti-agent.env\n"
-        )
+        env_bootstrap += write_env("/etc/spulti-agent.env", config)
     installer = INSTALL_SCRIPT.replace(
         "SPULTI_CLOUD_PROVIDER=gcp",
         f"SPULTI_CLOUD_PROVIDER={provider.lower()}",

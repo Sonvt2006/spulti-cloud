@@ -54,6 +54,25 @@ class DashboardJobTests(unittest.TestCase):
             self.client.post("/api/dashboard/jobs", json={}).status_code, 401
         )
 
+    def test_options_handles_valid_and_missing_agent_configuration(self):
+        cases = [
+            ({}, True),
+            ({"SPULTI_PUBLIC_API_URL": ""}, False),
+            ({"SPULTI_PUBLIC_API_URL": "https://api.example.test?query=1"}, False),
+            ({"SPULTI_AGENT_RELEASE_URL": ""}, False),
+            ({"SPULTI_AGENT_RELEASE_SHA256": "invalid"}, False),
+        ]
+        for config, configured in cases:
+            with self.subTest(config=config), patch.dict(os.environ, config):
+                response = self.client.get(
+                    "/api/dashboard/options", headers=self.headers()
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                data = response.json()
+                self.assertEqual(data["managed_agent_configured"], configured)
+                self.assertEqual(data["managed_agent_error"] is None, configured)
+                self.assertTrue(data["locations"])
+
     def test_program_is_stored_and_delivered_to_managed_attempt(self):
         # Compilation during upload must never execute user code on the API.
         source = "raise RuntimeError('only the VM should run this')\n"

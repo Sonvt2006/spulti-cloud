@@ -97,6 +97,22 @@ class NodeMonitoringTests(unittest.TestCase):
             job_id=job["job_id"], startup_script="#!/bin/bash\necho prepare-job\nexit 0"
         )
         script = attempt.spec["startup_script"]
+        node_env = re.search(
+            r"printf %s (\S+) \| base64 -d > /etc/spulti-node.env", script
+        )
+        job_env = re.search(
+            r"printf %s (\S+) \| base64 -d > /etc/spulti-agent.env", script
+        )
+        self.assertIsNotNone(node_env, "Managed bootstrap must retain node credentials")
+        self.assertIsNotNone(
+            job_env, "Managed bootstrap must also include job credentials"
+        )
+        self.assertIn(
+            node_token(attempt.request_id), base64.b64decode(node_env[1]).decode()
+        )
+        self.assertIn(
+            attempt_token(attempt.request_id), base64.b64decode(job_env[1]).decode()
+        )
         self.assertLess(
             script.index("enable --now spulti-node-agent"),
             script.index("echo prepare-job"),
