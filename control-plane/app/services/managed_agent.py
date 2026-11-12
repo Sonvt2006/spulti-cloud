@@ -19,11 +19,16 @@ def attempt_token(request_id: str) -> str:
     ).hexdigest()
 
 
-def agent_settings() -> tuple[str, str, str]:
+def agent_settings(*, require_api: bool = True) -> tuple[str, str, str]:
     base = os.getenv("SPULTI_PUBLIC_API_URL", "").rstrip("/")
     release = os.getenv("SPULTI_AGENT_RELEASE_URL", "")
     digest = os.getenv("SPULTI_AGENT_RELEASE_SHA256", "").lower()
-    for value in (base, release):
+
+    # Máy không có job chỉ cần URL tải Agent.
+    # Máy có job cần cả HTTPS API.
+    urls = (base, release) if require_api else (release,)
+
+    for value in urls:
         url = urlparse(value)
         if (
             url.scheme != "https"
@@ -33,48 +38,77 @@ def agent_settings() -> tuple[str, str, str]:
             or url.fragment
             or any(c.isspace() for c in value)
         ):
-            raise ValueError("Managed jobs require HTTPS API and agent release URLs")
-    if urlparse(base).query:
+            raise ValueError("Agent installation requires valid HTTPS URLs")
+
+    if require_api and urlparse(base).query:
         raise ValueError("API URL must not contain a query string")
+
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
         raise ValueError("Set SPULTI_AGENT_RELEASE_SHA256 to the agent archive SHA256")
+
     return base, release, digest
 
 
 def startup_script(
-    job_id: str, request_id: str, provider: str, user_script: str
+    job_id: str | None,
+    request_id: str,
+    provider: str,
+    user_script: str,
 ) -> str:
-    base, release, digest = agent_settings()
-    # The URL is an immutable operator-owned release, not an expiring presigned URL.
-    # User data is snapshotted, making cloud idempotency retries byte-for-byte stable.
-    config = {
-        "SPULTI_CONTROL_PLANE_URL": base,
-        "SPULTI_AGENT_TOKEN": attempt_token(request_id),
-        "SPULTI_JOB_ID": job_id,
-    }
-    env_text = (
-        "\n".join(f"{key}={json.dumps(value)}" for key, value in config.items()) + "\n"
+    base, release, digest = agent_settings(require_api=job_id is not None)
+
+    env_bootstrap = ""
+
+    # Chỉ tạo cấu hình và token khi có job.
+    if job_id is not None:
+        config = {
+            "SPULTI_CONTROL_PLANE_URL": base,
+            "SPULTI_AGENT_TOKEN": attempt_token(request_id),
+            "SPULTI_JOB_ID": job_id,
+        }
+
+        env_text = (
+            "\n".join(f"{key}={json.dumps(value)}" for key, value in config.items())
+            + "\n"
+        )
+
+        encoded = base64.b64encode(env_text.encode()).decode()
+
+        env_bootstrap = (
+            f"printf %s {shlex.quote(encoded)} " "| base64 -d > /etc/spulti-agent.env\n"
+        )
+
+    installer = INSTALL_SCRIPT.replace(
+        "SPULTI_CLOUD_PROVIDER=gcp",
+        f"SPULTI_CLOUD_PROVIDER={provider.lower()}",
     )
 
-    encoded = base64.b64encode(env_text.encode()).decode()
-    installer = INSTALL_SCRIPT.replace(
-        "SPULTI_CLOUD_PROVIDER=gcp", f"SPULTI_CLOUD_PROVIDER={provider.lower()}"
+    installer = installer.replace(
+        ":-gcp}",
+        f":-{provider.lower()}}}",
     )
-    installer = installer.replace(":-gcp}", f":-{provider.lower()}}}")
+
     start = installer.index("ExecStart=/usr/bin/python3")
     end = installer.index("RestartSec=10", start)
+
     installer = (
         installer[:start]
         + (
-            "ExecStart=/usr/bin/python3 /opt/spulti-agent/agent.py managed "
-            "--state-dir /var/lib/spulti-agent\nRestart=on-failure\n"
+            "ExecStart=/usr/bin/python3 "
+            "/opt/spulti-agent/agent.py managed "
+            "--state-dir /var/lib/spulti-agent\n"
+            "Restart=on-failure\n"
         )
         + installer[end:]
     )
+
     return (
-        "#!/bin/bash\nset -euo pipefail\nset +x\numask 077\n"
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        "set +x\n"
+        "umask 077\n"
         + (user_script + "\n" if user_script else "")
-        + f"printf %s {shlex.quote(encoded)} | base64 -d > /etc/spulti-agent.env\n"
+        + env_bootstrap
         + f"export SPULTI_AGENT_DOWNLOAD_URL={shlex.quote(release)}\n"
         + f"export SPULTI_AGENT_SHA256={shlex.quote(digest)}\n"
         + installer
