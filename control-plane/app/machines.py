@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID, uuid4
@@ -11,6 +11,7 @@ from app.models import (
     Machine,
     MachineJob,
     MachineLifecycle,
+    NodeAgent,
     RecoveryRun,
 )
 from app.services.instance_manager import (
@@ -21,6 +22,7 @@ from app.services.instance_manager import (
     request_delete,
     retry_machine,
 )
+from app.services.recovery import setting, utc
 from app.tasks import sync_machine
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from kombu.exceptions import OperationalError
@@ -68,6 +70,8 @@ class MachineResponse(BaseModel):
     instance: InstanceResponse | None = None
     ssh_username: str = "spulti"
     job_id: str | None = None
+    node_last_heartbeat_at: datetime | None = None
+    node_status: str | None = None
 
 
 def _instance_view(instance: Instance, attempt: InstanceAttempt) -> InstanceResponse:
@@ -106,6 +110,19 @@ def machine_response(db: Session, machine: Machine) -> MachineResponse:
     ).first()
     if row:
         result.instance = _instance_view(*row)
+        node = db.get(NodeAgent, row[1].id)
+        if node:
+            result.node_last_heartbeat_at = node.last_heartbeat_at
+            result.node_status = (
+                "INTERRUPTING"
+                if node.interruption
+                else "STARTING"
+                if not node.last_heartbeat_at
+                else "STALE"
+                if datetime.now(UTC) - utc(node.last_heartbeat_at)
+                > timedelta(seconds=setting("SPULTI_HEARTBEAT_TIMEOUT_SECONDS", 90))
+                else "ONLINE"
+            )
     return result
 
 

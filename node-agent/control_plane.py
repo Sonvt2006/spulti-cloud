@@ -47,6 +47,7 @@ class ControlPlaneClient:
         self.base_url = validate_control_plane_url(base_url)
         self.token = token
         self.job_id = job_id
+        self.api_path = f"/api/agent/jobs/{job_id}"
         self.stop_event = stop_event
 
     def _request(
@@ -58,7 +59,7 @@ class ControlPlaneClient:
         allow_404: bool = False,
         deadline: float | None = None,
     ) -> dict | None:
-        url = f"{self.base_url}/api/agent/jobs/{self.job_id}/{suffix}"
+        url = f"{self.base_url}{self.api_path}/{suffix}"
         encoded = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = Request(
             url,
@@ -149,3 +150,17 @@ class ControlPlaneClient:
                 "status": status,
             },
         )
+
+
+class NodeClient(ControlPlaneClient):
+    """Node credentials cannot access the job/checkpoint API."""
+
+    def __init__(self, base_url: str, token: str, request_id: str):
+        super().__init__(base_url, token, request_id)
+        self.api_path = f"/api/agent/nodes/{request_id}"
+
+    def heartbeat(self, *, deadline: float) -> None:
+        self._request("POST", "heartbeat", {}, deadline=deadline)
+
+    def interruption(self, notice: dict, *, deadline: float) -> None:
+        self._request("POST", "interruptions", notice, deadline=deadline)

@@ -636,8 +636,9 @@ dashboard/API ở mục này để có lịch sử và tính chi phí trong giao
 
 ### 8.6. Job, node-agent và checkpoint S3 khi control-plane ở laptop
 
-Tạo VM không gắn job chỉ cần cấu hình các bước trên. Để agent chạy workload và
-khôi phục từ checkpoint, cần thêm cấu hình:
+Mọi VM đều chạy agent thường trực để gửi heartbeat và báo thu hồi. Trước khi tạo
+máy, kể cả không gắn job, cần cấu hình HTTPS API, URL release và SHA256 dưới đây.
+Bucket/region S3 cần thêm khi chạy workload có checkpoint:
 
 ```dotenv
 SPULTI_CHECKPOINT_BUCKET=<bucket-checkpoint-da-chuan-bi>
@@ -656,7 +657,7 @@ recreate **API và worker** như mục 5.2.
 `http://localhost:8080` chỉ dùng từ laptop. `localhost` trên VM là chính VM đó;
 VM AWS/GCP không truy cập được API laptop qua URL này. Cần endpoint HTTPS có thể
 truy cập từ VM, chuyển tiếp về Nginx local bằng hạ tầng/tunnel đã được cấu hình,
-và giữ laptop/kết nối hoạt động. Code hiện từ chối URL HTTP cho managed job.
+và giữ laptop/kết nối hoạt động. Code từ chối URL HTTP cho mọi VM được quản lý.
 Không tự public API hay tạo tunnel khi chỉ muốn xem dashboard local.
 
 Đóng gói agent và thiết lập release theo [RECOVERY.md](RECOVERY.md). Tạo job hoặc

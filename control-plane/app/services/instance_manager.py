@@ -17,6 +17,7 @@ from app.models import (
     Machine,
     MachineJob,
     MachineLifecycle,
+    NodeAgent,
     SSHKey,
     User,
 )
@@ -28,7 +29,12 @@ from app.services.cloud_errors import (
     is_not_found,
 )
 from app.services.launch_config import launch_keys, load_launch_profiles, make_adapter
-from app.services.managed_agent import agent_settings, attempt_token, startup_script
+from app.services.managed_agent import (
+    agent_settings,
+    attempt_token,
+    node_token,
+    startup_script,
+)
 from app.services.placement import PlacementRequest, rank_candidates
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import func, select, update
@@ -204,18 +210,24 @@ def _prepare_attempts(
                 build_aws_user_data(spec)
         except ValueError as exc:
             raise ManagerError(422, str(exc)) from exc
+        attempt = InstanceAttempt(
+            machine_id=machine.id,
+            position=position + added,
+            request_id=request_id,
+            machine_type_id=candidate.machine_type_id,
+            provider=candidate.provider,
+            region=candidate.region,
+            zone=candidate.zone,
+            spec=asdict(spec),
+            adapter_config=profile.adapter_config(),
+            state="READY",
+        )
+        db.add(attempt)
+        db.flush()
         db.add(
-            InstanceAttempt(
-                machine_id=machine.id,
-                position=position + added,
-                request_id=request_id,
-                machine_type_id=candidate.machine_type_id,
-                provider=candidate.provider,
-                region=candidate.region,
-                zone=candidate.zone,
-                spec=asdict(spec),
-                adapter_config=profile.adapter_config(),
-                state="READY",
+            NodeAgent(
+                attempt_id=attempt.id,
+                token_hash=hashlib.sha256(node_token(request_id).encode()).hexdigest(),
             )
         )
         added += 1
@@ -263,7 +275,7 @@ def create_machine(
     if not db.scalar(select(SSHKey.id).where(SSHKey.user_id == user_id).limit(1)):
         raise ManagerError(422, "Hãy đăng ký SSH public key trước khi tạo máy")
     try:
-        agent_settings(require_api=payload.job_id is not None)
+        agent_settings()
     except ValueError as exc:
         raise ManagerError(503, str(exc)) from exc
 
@@ -544,6 +556,9 @@ def reconcile_machine(db: Session, machine_id: int) -> None:
                             .where(InstanceAttempt.id == attempt.id)
                             .values(state="CREATING")
                         )
+                        node = marker_db.get(NodeAgent, attempt.id)
+                        if node:
+                            node.activated_at = datetime.now(UTC)
                         binding = marker_db.get(MachineJob, machine_id)
                         if binding:
                             job = marker_db.get(

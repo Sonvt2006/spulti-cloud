@@ -55,6 +55,9 @@ class PostgresConcurrencyTests(unittest.TestCase):
             {
                 "SPULTI_LAUNCH_CONFIG": json.dumps(PROFILES),
                 "SPULTI_MAX_MACHINES_PER_USER": "5",
+                "SPULTI_PUBLIC_API_URL": "https://api.example.test",
+                "SPULTI_AGENT_RELEASE_URL": "https://releases.example.test/agent.tar.gz",
+                "SPULTI_AGENT_RELEASE_SHA256": "a" * 64,
             },
         )
         self.env.start()

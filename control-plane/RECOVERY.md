@@ -7,11 +7,11 @@ thay thế khi mất hoặc dừng; job gắn với máy được khôi phục t
 ## Cấu hình và cập nhật
 
 1. Cập nhật API, worker, Beat **cùng phiên bản** và chạy `python -m app.init_db`
-   trước khi nhận yêu cầu. Hai bảng mới `machine_jobs`, `recovery_runs` được tạo
+   trước khi nhận yêu cầu. Các bảng `machine_jobs`, `recovery_runs`, `node_agents` được tạo
    bổ sung; không ALTER hay xóa dữ liệu các bảng cũ.
 2. Làm [hướng dẫn S3 và phát hành agent](S3_SETUP.md) để tạo một bucket dùng chung, cấp quyền
    checkpoint cho API, upload release và cấp URL HTTPS bền vững.
-   Đóng gói toàn bộ file Python ở gốc `node-agent/` (bao gồm `managed.py`) thành
+   Đóng gói toàn bộ file Python ở gốc `node-agent/` (bao gồm `managed.py` và `node_daemon.py`) thành
    archive có `agent.py` ở gốc. Ví dụ từ thư mục gốc repo:
 
    ```sh
@@ -41,6 +41,52 @@ thay thế khi mất hoặc dừng; job gắn với máy được khôi phục t
    Không đổi secret khi còn attempt đã chuẩn bị/đang chạy; cần rollout/reprovision
    có kiểm soát khi xoay khóa.
 
+## Agent thường trực trên mọi máy
+
+Mỗi VM mới, kể cả VM không có `job_id`, tự cài release và chạy
+`spulti-node-agent.service` ngay sau bootstrap. Service chạy `agent.py daemon`,
+gửi heartbeat mỗi 20 giây, kiểm tra metadata thu hồi AWS/GCP mỗi 2 giây và được
+systemd tự khởi động lại nếu tiến trình thoát. Job hoàn tất không dừng service này.
+Cả ba biến `SPULTI_PUBLIC_API_URL`, `SPULTI_AGENT_RELEASE_URL` và
+`SPULTI_AGENT_RELEASE_SHA256` là bắt buộc cho mọi yêu cầu tạo máy.
+
+Credential giám sát riêng cho từng attempt nằm trong `/etc/spulti-node.env`
+(root-only). Agent gọi `POST /api/agent/nodes/{request_id}/heartbeat` và
+`POST /api/agent/nodes/{request_id}/interruptions` bằng `X-Agent-Token`.
+Token này không truy cập được API job; token attempt cũ bị thu hồi khi recovery
+bắt đầu. API dùng giờ nhận heartbeat trên server, không tin đồng hồ của VM.
+
+Khi nhận cảnh báo Spot, API lưu ngay vào database và đánh thức worker. Recovery
+chờ ít nhất 20 giây trước khi thu hồi credential/xóa máy để job có ngân sách
+checkpoint cuối. Báo trùng cùng sự kiện không kéo dài thời gian này. Lỗi Redis
+không làm mất cảnh báo; Beat đọc lại intent từ database. Nếu không nhận được
+cảnh báo, timeout heartbeat hoặc trạng thái cloud vẫn kích hoạt recovery.
+Đây không phải cam kết không có downtime: worker xác nhận VM cũ đã mất trước khi
+cấp VM thay thế, và thời gian cấp máy phụ thuộc capacity/cloud.
+
+Kiểm tra sau khi SSH:
+
+```sh
+sudo systemctl status spulti-node-agent --no-pager
+sudo journalctl -u spulti-node-agent -n 50 --no-pager
+```
+
+Log bình thường có `[node] HEARTBEAT acknowledged`. Nếu có managed job, xem riêng
+`spulti-job-agent.service`. Dừng/restart service giám sát không bị báo giả thành
+cảnh báo Spot; nếu để service dừng quá timeout thì control-plane vẫn thay máy.
+
+Máy/attempt được tạo từ phiên bản cũ không tự được sửa bootstrap. Cập nhật control
+plane và release trước khi tạo máy mới. Không bật timeout node cho attempt cũ
+chưa được cấp credential node.
+
+Trên local, sau khi điền URL/hash thật và phát hành release mới, chạy từ `control-plane`:
+
+```sh
+docker compose --env-file .env.local -f compose.local.yaml build api
+docker compose --env-file .env.local -f compose.local.yaml run --rm --no-deps api python -m app.init_db
+docker compose --env-file .env.local -f compose.local.yaml up -d api worker beat
+```
+
 ## Tạo máy chạy job tự động
 
 Đăng ký chương trình qua `PUT /api/agent/submissions/{uuid}` với Bearer token của
@@ -63,20 +109,23 @@ Sau đó gọi `POST /api/machines`:
 
 Job phải thuộc cùng người dùng, chưa hoàn thành và chưa gắn với máy khác. Có thể
 sử dụng job demo tạo qua `POST /api/agent/jobs`. Không truyền `job_id` thì vẫn có
-recovery VM, nhưng không có heartbeat/job/checkpoint để tự khôi phục workload.
+heartbeat và recovery VM; không có job/checkpoint để tự khôi phục workload.
 
 Worker cấp credential riêng cho từng attempt trước khi gọi cloud, cài agent,
-truyền cấu hình qua file root-only và khởi chạy `agent.py managed` bằng systemd
+truyền cấu hình qua file root-only và khởi chạy `agent.py managed` bằng service
+`spulti-job-agent`
 với user `spulti-agent`. Runner tải source/checkpoint bằng token của job, kiểm tra
 checksum và tiếp tục từ bước hoàn thành gần nhất. `startup_script` tùy chọn chạy
-trước installer để operator/user chuẩn bị môi trường và dependency.
+trong subshell sau khi node monitor đã chạy, trước khi bắt đầu job, để chuẩn bị
+môi trường và dependency. Script lỗi không ngăn heartbeat node.
 
 ## Trạng thái và tính an toàn khi retry
 
 - Trigger: VM mất/dừng, báo thu hồi AWS/GCP, agent báo dừng, quá hạn heartbeat
   (90 giây), hoặc không nhận heartbeat đầu tiên sau boot grace (600 giây).
-- Agent gửi heartbeat theo thời gian (20 giây), kể cả khi đang chạy một bước dài;
-  job đã `COMPLETED` không kích hoạt recovery do thiếu heartbeat.
+- Node gửi heartbeat mỗi 20 giây, độc lập với job. Job đã `COMPLETED` không
+  kích hoạt recovery do thiếu heartbeat **job**, nhưng máy vẫn được giám sát.
+- Timeout node có lý do `NODE_HEARTBEAT_TIMEOUT` hoặc `NODE_BOOT_TIMEOUT`.
 - Recovery có trạng thái `CLEANUP → PLACEMENT → STARTING → SUCCEEDED`.
   Mỗi failed attempt chỉ có một bản ghi nhờ unique constraint và khóa Machine.
 - Khi bắt đầu recovery, vô hiệu hóa token cũ. Xóa VM cũ và xác nhận VM đã mất trước
@@ -90,8 +139,8 @@ trước installer để operator/user chuẩn bị môi trường và dependenc
 - Khóa máy, marker `CREATING` và credential/attempt binding bền vững bảo đảm
   worker chết hoặc Redis mất dữ liệu không dẫn tới một lần create mới không rõ
   nguồn gốc. Retry cloud dùng đúng UUID và startup script đã lưu.
-- VM mới `RUNNING` chưa đủ: job có heartbeat của attempt mới thì recovery mới
-  `SUCCEEDED`. Job không gắn với máy thì trạng thái cloud là tiêu chí hoàn tất.
+- VM mới `RUNNING` chưa đủ: phải nhận heartbeat node của attempt mới thì recovery
+  mới `SUCCEEDED`. Nếu có managed job, phải có cả heartbeat job của attempt mới.
 - Xóa máy ưu tiên hơn recovery; trạng thái history chuyển `CANCELLED` và không cấp
   VM thay thế. Lỗi cleanup/network lặp lại hoặc quá số recovery/giờ sẽ bật
   `needs_attention`; sửa nguyên nhân rồi gọi endpoint `/retry` hiện có.
@@ -99,7 +148,8 @@ trước installer để operator/user chuẩn bị môi trường và dependenc
   checkpoint và interruption được đồng bộ với thao tác thay token; token cũ
   không được phép cập nhật tiến độ của attempt mới.
 
-`GET /api/machines/{id}` trả thêm `job_id`.
+`GET /api/machines/{id}` trả thêm `job_id`, `node_last_heartbeat_at` và
+`node_status` (`STARTING`, `ONLINE`, `STALE`, `INTERRUPTING`; null cho attempt cũ).
 `GET /api/machines/{id}/events?limit=50&offset=0` trả lịch sử recovery, lý do,
 failed/replacement attempt, thời điểm, cooldown, lỗi và downtime của lần thành công.
 API kiểm tra quyền sở hữu như các endpoint máy khác. Lịch sử instance vẫn nằm tại

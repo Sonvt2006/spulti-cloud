@@ -23,6 +23,7 @@ from app.models import (  # noqa: E402
     MachineLifecycle,
     MachineType,
     MachineTypeOffering,
+    NodeAgent,
     RecoveryRun,
     SpotPrice,
     SpotRisk,
@@ -59,6 +60,7 @@ MODELS = (
     Instance,
     MachineLifecycle,
     InstanceAttempt,
+    NodeAgent,
 )
 PROFILES = [
     {
@@ -198,6 +200,9 @@ class InstanceManagerTests(unittest.TestCase):
             {
                 "SPULTI_LAUNCH_CONFIG": json.dumps(PROFILES),
                 "SPULTI_MAX_MACHINES_PER_USER": "5",
+                "SPULTI_PUBLIC_API_URL": "https://api.example.test",
+                "SPULTI_AGENT_RELEASE_URL": "https://releases.example.test/agent.tar.gz",
+                "SPULTI_AGENT_RELEASE_SHA256": "a" * 64,
             },
         )
         self.env.start()
@@ -572,6 +577,12 @@ class InstanceManagerTests(unittest.TestCase):
         self.tick(machine_id)
         self.tick(machine_id)
         self.assertEqual(self.db.scalar(select(func.count()).select_from(Instance)), 2)
+        self.assertEqual(self.view(machine_id)["status"], "RECOVERING")
+        self.db.get(
+            NodeAgent, run.replacement_attempt_id
+        ).last_heartbeat_at = datetime.now(UTC)
+        self.db.commit()
+        self.tick(machine_id)
         self.assertEqual(self.view(machine_id)["status"], "RUNNING")
         self.assertEqual(run.state, "SUCCEEDED")
 

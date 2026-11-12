@@ -287,6 +287,26 @@ class InstanceAttempt(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+class NodeAgent(Base):
+    """Machine monitoring belongs to a VM attempt, independently of any job."""
+
+    __tablename__ = "node_agents"
+
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("instance_attempts.id"), primary_key=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    interruption: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql")
+    )
+    interruption_received_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    recovery_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class SpotPrice(Base):
     # Lịch sử giá theo giờ của từng loại máy.
     __tablename__ = "spot_prices"

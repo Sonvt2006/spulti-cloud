@@ -9,7 +9,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import test_instance_manager as fixtures
-from app.models import AgentJob, InstanceAttempt, MachineJob, RecoveryRun
+from app.models import AgentJob, InstanceAttempt, MachineJob, NodeAgent, RecoveryRun
 from sqlalchemy import func, select
 
 
@@ -87,6 +87,13 @@ class RecoveryTests(unittest.TestCase):
         self.tick(machine_id)  # detect disappearance
         self.tick(machine_id)  # re-rank excluding AWS
         self.tick(machine_id)  # create GCP
+        node = self.db.scalar(
+            select(NodeAgent)
+            .join(InstanceAttempt)
+            .where(InstanceAttempt.provider == "GCP", InstanceAttempt.state == "ACTIVE")
+        )
+        node.last_heartbeat_at = datetime.now(UTC)
+        self.db.commit()
         self.tick(machine_id)
         self.assertEqual(len(self.gcp.specs), 1)
         run = self.db.scalar(select(RecoveryRun))
@@ -126,6 +133,11 @@ class RecoveryTests(unittest.TestCase):
         self.assertNotEqual(token, new_token)
         self.assertEqual(self.notice(job["job_id"], token).status_code, 401)
         self.assertEqual(self.heartbeat(job["job_id"], new_token).status_code, 200)
+        binding = self.db.get(MachineJob, machine_id)
+        self.db.get(
+            NodeAgent, binding.active_attempt_id
+        ).last_heartbeat_at = datetime.now(UTC)
+        self.db.commit()
         self.tick(machine_id)
         self.assertEqual(self.view(machine_id)["status"], "RUNNING")
         self.assertEqual(self.db.scalar(select(RecoveryRun)).state, "SUCCEEDED")

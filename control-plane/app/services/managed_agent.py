@@ -19,16 +19,19 @@ def attempt_token(request_id: str) -> str:
     ).hexdigest()
 
 
-def agent_settings(*, require_api: bool = True) -> tuple[str, str, str]:
+def node_token(request_id: str) -> str:
+    return hmac.new(
+        JWT_SECRET.encode(), f"node-agent-v1:{request_id}".encode(), hashlib.sha256
+    ).hexdigest()
+
+
+def agent_settings() -> tuple[str, str, str]:
     base = os.getenv("SPULTI_PUBLIC_API_URL", "").rstrip("/")
     release = os.getenv("SPULTI_AGENT_RELEASE_URL", "")
     digest = os.getenv("SPULTI_AGENT_RELEASE_SHA256", "").lower()
 
-    # Máy không có job chỉ cần URL tải Agent.
-    # Máy có job cần cả HTTPS API.
-    urls = (base, release) if require_api else (release,)
-
-    for value in urls:
+    # Every VM contacts the API, including idle nodes without a job.
+    for value in (base, release):
         url = urlparse(value)
         if (
             url.scheme != "https"
@@ -40,7 +43,7 @@ def agent_settings(*, require_api: bool = True) -> tuple[str, str, str]:
         ):
             raise ValueError("Agent installation requires valid HTTPS URLs")
 
-    if require_api and urlparse(base).query:
+    if urlparse(base).query:
         raise ValueError("API URL must not contain a query string")
 
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
@@ -55,11 +58,25 @@ def startup_script(
     provider: str,
     user_script: str,
 ) -> str:
-    base, release, digest = agent_settings(require_api=job_id is not None)
+    base, release, digest = agent_settings()
 
-    env_bootstrap = ""
+    def write_env(path: str, config: dict[str, str]) -> str:
+        env_text = (
+            "\n".join(f"{key}={json.dumps(value)}" for key, value in config.items())
+            + "\n"
+        )
+        encoded = base64.b64encode(env_text.encode()).decode()
+        return f"printf %s {shlex.quote(encoded)} | base64 -d > {path}\n"
 
-    # Chỉ tạo cấu hình và token khi có job.
+    env_bootstrap = write_env(
+        "/etc/spulti-node.env",
+        {
+            "SPULTI_CONTROL_PLANE_URL": base,
+            "SPULTI_NODE_TOKEN": node_token(request_id),
+            "SPULTI_NODE_REQUEST_ID": request_id,
+        },
+    )
+
     if job_id is not None:
         config = {
             "SPULTI_CONTROL_PLANE_URL": base,
@@ -67,16 +84,7 @@ def startup_script(
             "SPULTI_JOB_ID": job_id,
         }
 
-        env_text = (
-            "\n".join(f"{key}={json.dumps(value)}" for key, value in config.items())
-            + "\n"
-        )
-
-        encoded = base64.b64encode(env_text.encode()).decode()
-
-        env_bootstrap = (
-            f"printf %s {shlex.quote(encoded)} " "| base64 -d > /etc/spulti-agent.env\n"
-        )
+        env_bootstrap += write_env("/etc/spulti-agent.env", config)
 
     installer = INSTALL_SCRIPT.replace(
         "SPULTI_CLOUD_PROVIDER=gcp",
@@ -88,6 +96,13 @@ def startup_script(
         f":-{provider.lower()}}}",
     )
 
+    # Keep the optional job runner separate from the always-on node monitor.
+    installer = installer.replace("spulti-node-agent", "spulti-job-agent")
+    installer = installer.replace(
+        "systemctl stop spulti-job-agent.service 2>/dev/null || true",
+        "systemctl stop spulti-job-agent.service 2>/dev/null || true\n"
+        "    systemctl stop spulti-node-agent.service 2>/dev/null || true",
+    )
     start = installer.index("ExecStart=/usr/bin/python3")
     end = installer.index("RestartSec=10", start)
 
@@ -102,14 +117,61 @@ def startup_script(
         + installer[end:]
     )
 
+    # Start monitoring before user setup (which may be slow or fail), then
+    # start the job only after its user-provided dependencies are ready.
+    job_start_offset = installer.index("if [ -f /etc/spulti-agent.env ]; then")
+    job_start = installer[job_start_offset:]
+    installer = installer[:job_start_offset]
+    installer += """
+if [ ! -f /opt/spulti-agent/node_daemon.py ]; then
+    echo "BOOTSTRAP: release lacks node_daemon.py; publish an updated agent" >&2
+    exit 1
+fi
+python3 /opt/spulti-agent/agent.py daemon --help >/dev/null
+cat > /etc/systemd/system/spulti-node-agent.service <<'UNIT'
+[Unit]
+Description=Spulti Node Monitor
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=spulti-agent
+Group=spulti-agent
+WorkingDirectory=/opt/spulti-agent
+EnvironmentFile=/etc/spulti-node.env
+Environment=PYTHONUNBUFFERED=1
+Environment=SPULTI_CLOUD_PROVIDER=__CLOUD__
+ExecStart=/usr/bin/python3 /opt/spulti-agent/agent.py daemon
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/spulti-agent
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+chmod 0600 /etc/spulti-node.env
+chmod 0644 /etc/systemd/system/spulti-node-agent.service
+systemctl daemon-reload
+systemctl enable --now spulti-node-agent.service
+echo "BOOTSTRAP: node monitor started"
+""".replace("__CLOUD__", provider.lower())
+
     return (
         "#!/bin/bash\n"
         "set -euo pipefail\n"
         "set +x\n"
         "umask 077\n"
-        + (user_script + "\n" if user_script else "")
         + env_bootstrap
         + f"export SPULTI_AGENT_DOWNLOAD_URL={shlex.quote(release)}\n"
         + f"export SPULTI_AGENT_SHA256={shlex.quote(digest)}\n"
         + installer
+        + ("(\n" + user_script + "\n)\n" if user_script else "")
+        + job_start
     )
