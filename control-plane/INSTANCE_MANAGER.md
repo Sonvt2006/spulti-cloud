@@ -12,6 +12,8 @@ Trước khi tạo máy, cần có:
 - Catalog và giá spot thật: làm theo [Market Collector](Market_collector.md).
   Dữ liệu seed mẫu chưa đủ để tạo máy thật.
 - Nếu chạy job có checkpoint/recovery: hoàn thành [S3 setup](S3_SETUP.md).
+- Mọi VM cần HTTPS API và URL/SHA256 release agent, kể cả không gắn job. Agent
+  chạy thường trực để gửi heartbeat/báo thu hồi; xem [Recovery](RECOVERY.md).
 
 ## 2. Chọn cấu hình máy AWS
 

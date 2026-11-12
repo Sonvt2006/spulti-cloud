@@ -17,6 +17,7 @@ from app.models import (
     MachineJob,
     MachineLifecycle,
     MachineType,
+    NodeAgent,
     RecoveryRun,
 )
 from app.services.placement import CandidateKey
@@ -47,6 +48,16 @@ def pending_run(db: Session, machine_id: int) -> RecoveryRun | None:
 
 
 def revoke_agent(db: Session, machine_id: int) -> None:
+    for node in db.scalars(
+        select(NodeAgent)
+        .join(InstanceAttempt, InstanceAttempt.id == NodeAgent.attempt_id)
+        .where(
+            InstanceAttempt.machine_id == machine_id,
+            InstanceAttempt.state.in_(["CREATING", "ACTIVE", "ENDED"]),
+        )
+        .with_for_update(of=NodeAgent)
+    ):
+        node.token_hash = hashlib.sha256(uuid4().bytes).hexdigest()
     binding = db.get(MachineJob, machine_id, populate_existing=True)
     if binding:
         job = db.get(
@@ -107,6 +118,22 @@ def begin_recovery(
 
 
 def agent_failure(db: Session, machine_id: int, attempt_id: int) -> str | None:
+    node = db.get(NodeAgent, attempt_id, populate_existing=True)
+    now = datetime.now(UTC)
+    if node and node.activated_at:
+        if node.interruption:
+            if now >= utc(node.recovery_after):
+                return "SPOT_NOTICE"
+            return None  # Let the job finish its final checkpoint first.
+        last = node.last_heartbeat_at
+        if last and now - utc(last) > timedelta(
+            seconds=setting("SPULTI_HEARTBEAT_TIMEOUT_SECONDS", 90)
+        ):
+            return "NODE_HEARTBEAT_TIMEOUT"
+        if not last and now - utc(node.activated_at) > timedelta(
+            seconds=setting("SPULTI_AGENT_BOOT_GRACE_SECONDS", 600)
+        ):
+            return "NODE_BOOT_TIMEOUT"
     binding = db.get(MachineJob, machine_id, populate_existing=True)
     if (
         not binding
@@ -211,6 +238,15 @@ def mark_running(db: Session, machine: Machine, attempt: InstanceAttempt) -> Non
     if not run or run.state != "STARTING":
         return
     run.replacement_attempt_id = attempt.id
+    node = db.get(NodeAgent, attempt.id, populate_existing=True)
+    if node and (
+        not node.last_heartbeat_at
+        or node.interruption
+        or datetime.now(UTC) - utc(node.last_heartbeat_at)
+        > timedelta(seconds=setting("SPULTI_HEARTBEAT_TIMEOUT_SECONDS", 90))
+    ):
+        machine.status = "RECOVERING"
+        return
     binding = db.get(MachineJob, machine.id, populate_existing=True)
     if binding:
         job = db.get(AgentJob, binding.job_id, populate_existing=True)
