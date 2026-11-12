@@ -41,7 +41,9 @@ let routeBusy = false,
 let jobFile = null,
   jobFileName = '',
   jobFileReadVersion = 0,
-  jobLaunchConfigured = false;
+  jobLaunchConfigured = false,
+  jobAgentConfigured = false,
+  jobAgentError = '';
 let jobSettings = {total_steps: 1, checkpoint_every: 20, step_delay: 0, vcpu: 2, ram_gib: 4, provider: '', optimization_mode: 'BALANCED'};
 
 async function api(path, {
@@ -82,6 +84,7 @@ async function api(path, {
     const detail = Array.isArray(data.detail) ? data.detail.map(item => `${item.loc?.slice(1).join('.') || 'Dữ liệu'}: ${item.msg}`).join('; ') : data.detail;
     const error = new Error(typeof detail === 'string' ? detail : `API trả về lỗi ${response.status}. Vui lòng thử lại.`);
     error.status = response.status;
+    error.submissionRejected = response.headers.get('X-Spulti-Submission-Outcome') === 'rejected';
     throw error;
   }
   return data;
@@ -186,6 +189,8 @@ async function render(quiet = false) {
       const [options, keys] = await Promise.all([api('/api/dashboard/options'), api('/api/ssh-keys')]);
       if (currentEpoch !== epoch || !user) return;
       jobLaunchConfigured = options.launch_configured;
+      jobAgentConfigured = options.managed_agent_configured === true;
+      jobAgentError = options.managed_agent_error || 'Chạy job tự động cần API HTTPS và bản phát hành agent hợp lệ. Quản trị viên cần hoàn tất cấu hình.';
       sshKeys = keys;
       html = submitJobView();
     } else html = empty('Không tìm thấy trang', 'Chọn một trang trong menu.', '<a class="button" href="#/overview">Về tổng quan</a>');
@@ -286,8 +291,9 @@ function keysView() {
 
 function submitJobView() {
   const pending = pendingJob();
+  const setupNotice = !jobAgentConfigured ? `<div class="inline-info" role="status">${esc(jobAgentError)} <a href="#/create">Tạo máy để SSH</a></div>` : '';
   if (pending) return heading('Xác minh yêu cầu tạo job', 'Yêu cầu được giữ trong tab này để gửi lại an toàn khi mất kết nối.') +
-    `<section class="panel form-panel"><h2>${esc(pending.body.filename)}</h2><p>Kiểm tra hoặc gửi lại yêu cầu để mở đúng job và máy đã tạo.</p><form id="submit-job-form"><div id="form-error" role="alert"></div><button type="submit" class="button primary">Kiểm tra / gửi lại job</button></form></section>`;
+    `<section class="panel form-panel"><h2>${esc(pending.body.filename)}</h2><p>Kết quả yêu cầu trước chưa được xác nhận. Kiểm tra để mở job/máy đã tạo hoặc nhận kết quả từ chối.</p>${setupNotice}<form id="submit-job-form"><div id="form-error" role="alert"></div><button type="submit" class="button primary">Kiểm tra / gửi lại job</button></form></section>`;
   const hasFile = jobFile && jobFileName;
   return heading('Tạo job mới', 'Upload file Python, hệ thống tự tạo job và khởi chạy trên Spot.') +
     `<div class="create-grid"><div><section class="panel form-panel"><h2>Upload & tạo job</h2><p>Upload file Python (UTF-8, tối đa 16 KiB), chọn cấu hình và triển khai trên Spot.</p>
@@ -324,10 +330,11 @@ function submitJobView() {
     </div>
     ${!sshKeys.length ? '<p class="inline-error">Cần thêm SSH public key trước khi tạo máy. <a href="#/ssh-keys">Thêm public key</a></p>' : ''}
     ${!jobLaunchConfigured ? '<p class="inline-error">Hệ thống chưa cấu hình vùng và image để tạo máy.</p>' : ''}
+    ${setupNotice}
     <div id="form-error" role="alert"></div>
     <div class="form-actions">
       <a href="#/overview">Hủy</a>
-      <button type="submit" class="button primary" ${!hasFile || !sshKeys.length || !jobLaunchConfigured ? 'disabled' : ''}>${icon('upload')} Upload & Tạo job</button>
+      <button type="submit" class="button primary" ${!hasFile || !sshKeys.length || !jobLaunchConfigured || !jobAgentConfigured ? 'disabled' : ''}>${icon('upload')} Upload & Tạo job</button>
     </div>
     </form>
     </section></div>
@@ -356,7 +363,7 @@ async function selectJobFile(file) {
       const zone = document.querySelector('.upload-zone-content');
       if (zone) zone.innerHTML = `${icon('file')}<b>${esc(jobFileName)}</b><small>${number(file.size)} byte · Nhấp để đổi file</small>`;
       const submit = document.querySelector('#submit-job-form [type="submit"]');
-      if (submit) submit.disabled = !sshKeys.length || !jobLaunchConfigured;
+      if (submit) submit.disabled = !sshKeys.length || !jobLaunchConfigured || !jobAgentConfigured;
     }
   } catch (error) {
     if (owner === user?.id) notify(error instanceof TypeError ? 'File cần dùng mã hóa UTF-8.' : error.message, true);
@@ -506,6 +513,7 @@ app.addEventListener('submit', async event => {
     } else if (form.id === 'submit-job-form') {
       let saved = pendingJob();
       if (!saved) {
+        if (!jobAgentConfigured || !jobLaunchConfigured) throw new Error(jobAgentError || 'Hệ thống chưa sẵn sàng chạy job tự động.');
         if (!jobFile || !jobFileName) throw new Error('Vui lòng chọn file Python.');
         const data = Object.fromEntries(new FormData(form));
         const body = {filename: jobFileName, source_code: jobFile, provider: data.provider || null, optimization_mode: data.optimization_mode};
@@ -529,7 +537,7 @@ app.addEventListener('submit', async event => {
       if (page === startedPage) location.hash = `/machines/${result.machine.id}`;
     }
   } catch (error) {
-    if (form.id === 'submit-job-form' && [400, 403, 404, 409, 422].includes(error.status)) sessionStorage.removeItem('spulti.pending-job');
+    if (form.id === 'submit-job-form' && (error.submissionRejected || [400, 403, 404, 409, 422].includes(error.status))) sessionStorage.removeItem('spulti.pending-job');
     if (form.id === 'submit-job-form' && user?.id === startedUser && page === startedPage) content().innerHTML = submitJobView();
     formError(error);
   } finally {

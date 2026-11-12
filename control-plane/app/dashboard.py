@@ -31,6 +31,7 @@ from app.services.instance_manager import (
     owned_machine,
 )
 from app.services.launch_config import load_launch_profiles
+from app.services.managed_agent import agent_settings
 from app.services.placement import PlacementRequest
 from fastapi import APIRouter, Header, HTTPException, Query
 from pydantic import Field, model_validator
@@ -38,6 +39,10 @@ from sqlalchemy import func, or_, select
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 Days = Annotated[int, Query(ge=1, le=90)]
+MANAGED_JOB_CONFIGURATION_ERROR = (
+    "Chạy job tự động chưa sẵn sàng: cần URL HTTPS cho API và bản phát hành "
+    "agent có SHA256 hợp lệ. Bạn vẫn có thể tạo máy và SSH để chạy file."
+)
 
 
 def period_start(now: datetime, days: int) -> datetime:
@@ -203,6 +208,10 @@ def submit_job_and_create_machine(
                 )
             machine = db.get_one(Machine, existing.machine_id)
         else:
+            try:
+                agent_settings()
+            except ValueError as exc:
+                raise ManagerError(503, MANAGED_JOB_CONFIGURATION_ERROR) from exc
             job_id = str(uuid4())
             db.add(
                 AgentJob(
@@ -241,7 +250,11 @@ def submit_job_and_create_machine(
         db.commit()
     except ManagerError as exc:
         db.rollback()
-        raise HTTPException(exc.status_code, exc.detail) from exc
+        raise HTTPException(
+            exc.status_code,
+            exc.detail,
+            headers={"X-Spulti-Submission-Outcome": "rejected"},
+        ) from exc
     _wake_worker(machine.id)
     return result
 
@@ -312,6 +325,11 @@ def options(user: CurrentUser, db: DbSession) -> dict:
         profiles = load_launch_profiles()
     except ValueError as exc:
         raise HTTPException(503, "Cấu hình launch của hệ thống không hợp lệ") from exc
+    try:
+        agent_settings()
+        agent_configured = True
+    except ValueError:
+        agent_configured = False
     return {
         "locations": sorted(
             (
@@ -321,6 +339,10 @@ def options(user: CurrentUser, db: DbSession) -> dict:
             key=lambda row: (row["provider"], row["region"], row["zone"]),
         ),
         "launch_configured": bool(profiles),
+        "managed_agent_configured": agent_configured,
+        "managed_agent_error": None
+        if agent_configured
+        else MANAGED_JOB_CONFIGURATION_ERROR,
     }
 
 
