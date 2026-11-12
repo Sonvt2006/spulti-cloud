@@ -29,7 +29,7 @@ def agent_settings() -> tuple[str, str, str]:
     base = os.getenv("SPULTI_PUBLIC_API_URL", "").rstrip("/")
     release = os.getenv("SPULTI_AGENT_RELEASE_URL", "")
     digest = os.getenv("SPULTI_AGENT_RELEASE_SHA256", "").lower()
-    for value in (base, release) if require_api else (release,):
+    for value in (base, release):
         url = urlparse(value)
         if (
             url.scheme != "https"
@@ -39,12 +39,8 @@ def agent_settings() -> tuple[str, str, str]:
             or url.fragment
             or any(c.isspace() for c in value)
         ):
-            raise ValueError(
-                "Managed jobs require HTTPS API and agent release URLs"
-                if require_api
-                else "Agent installation requires an HTTPS release URL"
-            )
-    if require_api and urlparse(base).query:
+            raise ValueError("Agent installation requires valid HTTPS URLs")
+    if urlparse(base).query:
         raise ValueError("API URL must not contain a query string")
 
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
