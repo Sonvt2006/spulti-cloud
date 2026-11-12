@@ -19,11 +19,11 @@ def attempt_token(request_id: str) -> str:
     ).hexdigest()
 
 
-def agent_settings() -> tuple[str, str, str]:
+def agent_settings(*, require_api: bool = True) -> tuple[str, str, str]:
     base = os.getenv("SPULTI_PUBLIC_API_URL", "").rstrip("/")
     release = os.getenv("SPULTI_AGENT_RELEASE_URL", "")
     digest = os.getenv("SPULTI_AGENT_RELEASE_SHA256", "").lower()
-    for value in (base, release):
+    for value in (base, release) if require_api else (release,):
         url = urlparse(value)
         if (
             url.scheme != "https"
@@ -33,8 +33,12 @@ def agent_settings() -> tuple[str, str, str]:
             or url.fragment
             or any(c.isspace() for c in value)
         ):
-            raise ValueError("Managed jobs require HTTPS API and agent release URLs")
-    if urlparse(base).query:
+            raise ValueError(
+                "Managed jobs require HTTPS API and agent release URLs"
+                if require_api
+                else "Agent installation requires an HTTPS release URL"
+            )
+    if require_api and urlparse(base).query:
         raise ValueError("API URL must not contain a query string")
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
         raise ValueError("Set SPULTI_AGENT_RELEASE_SHA256 to the agent archive SHA256")
@@ -42,21 +46,27 @@ def agent_settings() -> tuple[str, str, str]:
 
 
 def startup_script(
-    job_id: str, request_id: str, provider: str, user_script: str
+    job_id: str | None, request_id: str, provider: str, user_script: str
 ) -> str:
-    base, release, digest = agent_settings()
+    base, release, digest = agent_settings(require_api=job_id is not None)
     # The URL is an immutable operator-owned release, not an expiring presigned URL.
     # User data is snapshotted, making cloud idempotency retries byte-for-byte stable.
-    config = {
-        "SPULTI_CONTROL_PLANE_URL": base,
-        "SPULTI_AGENT_TOKEN": attempt_token(request_id),
-        "SPULTI_JOB_ID": job_id,
-    }
-    env_text = (
-        "\n".join(f"{key}={json.dumps(value)}" for key, value in config.items()) + "\n"
-    )
-
-    encoded = base64.b64encode(env_text.encode()).decode()
+    # A plain SSH machine must not inherit a baked-in job or token from an image.
+    env_bootstrap = "rm -f /etc/spulti-agent.env\n"
+    if job_id is not None:
+        config = {
+            "SPULTI_CONTROL_PLANE_URL": base,
+            "SPULTI_AGENT_TOKEN": attempt_token(request_id),
+            "SPULTI_JOB_ID": job_id,
+        }
+        env_text = (
+            "\n".join(f"{key}={json.dumps(value)}" for key, value in config.items())
+            + "\n"
+        )
+        encoded = base64.b64encode(env_text.encode()).decode()
+        env_bootstrap = (
+            f"printf %s {shlex.quote(encoded)} | base64 -d > /etc/spulti-agent.env\n"
+        )
     installer = INSTALL_SCRIPT.replace(
         "SPULTI_CLOUD_PROVIDER=gcp", f"SPULTI_CLOUD_PROVIDER={provider.lower()}"
     )
@@ -74,7 +84,7 @@ def startup_script(
     return (
         "#!/bin/bash\nset -euo pipefail\nset +x\numask 077\n"
         + (user_script + "\n" if user_script else "")
-        + f"printf %s {shlex.quote(encoded)} | base64 -d > /etc/spulti-agent.env\n"
+        + env_bootstrap
         + f"export SPULTI_AGENT_DOWNLOAD_URL={shlex.quote(release)}\n"
         + f"export SPULTI_AGENT_SHA256={shlex.quote(digest)}\n"
         + installer

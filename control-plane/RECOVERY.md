@@ -63,8 +63,13 @@ Sau đó gọi `POST /api/machines`:
 ```
 
 Job phải thuộc cùng người dùng, chưa hoàn thành và chưa gắn với máy khác. Có thể
-sử dụng job demo tạo qua `POST /api/agent/jobs`. Không truyền `job_id` thì vẫn có
-recovery VM, nhưng không có heartbeat/job/checkpoint để tự khôi phục workload.
+sử dụng job demo tạo qua `POST /api/agent/jobs`. Không truyền `job_id` thì hệ thống
+vẫn cài node-agent và lệnh `spulti-agent` để dùng sau khi SSH. Service được tạo
+nhưng chờ cấu hình job, không tự chạy workload hoặc cấp token job. Máy vẫn có
+recovery VM, nhưng chưa có heartbeat/job/checkpoint để tự khôi phục workload.
+Mọi máy đều cần URL HTTPS và SHA256 hợp lệ của gói agent; chỉ máy gắn job mới
+cần API HTTPS. Agent đã sửa tương thích Python 3.10 trên Ubuntu 22.04; cần phát
+hành lại archive đã sửa và cập nhật URL/hash để VM mới nhận bản này.
 
 Worker cấp credential riêng cho từng attempt trước khi gọi cloud, cài agent,
 truyền cấu hình qua file root-only và khởi chạy `agent.py managed` bằng systemd
