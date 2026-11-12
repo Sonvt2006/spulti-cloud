@@ -193,13 +193,11 @@ def _prepare_attempts(
                 # GPUs already included in the catalog machine type. No N1 add-ons.
                 startup_script=(
                     startup_script(
-                        str(payload.job_id),
+                        str(payload.job_id) if payload.job_id else None,
                         request_id,
                         candidate.provider,
                         payload.startup_script,
                     )
-                    if payload.job_id
-                    else payload.startup_script
                 ),
             )
             if candidate.provider == "AWS":
@@ -264,12 +262,17 @@ def create_machine(
         raise ManagerError(409, f"Đã đạt hạn mức {limit} máy chưa xóa")
     if not db.scalar(select(SSHKey.id).where(SSHKey.user_id == user_id).limit(1)):
         raise ManagerError(422, "Hãy đăng ký SSH public key trước khi tạo máy")
+    try:
+        agent_settings(require_api=payload.job_id is not None)
+    except ValueError as exc:
+        raise ManagerError(503, str(exc)) from exc
+
     if payload.job_id:
-        try:
-            agent_settings()
-        except ValueError as exc:
-            raise ManagerError(503, str(exc)) from exc
-        job = db.get(AgentJob, str(payload.job_id), with_for_update=True)
+        job = db.get(
+            AgentJob,
+            str(payload.job_id),
+            with_for_update=True,
+        )
         if job is None or job.user_id != user_id:
             raise ManagerError(404, "Không tìm thấy job")
         if job.status == "COMPLETED":
