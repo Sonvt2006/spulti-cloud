@@ -300,6 +300,10 @@ small {
   color: #d9e7df
 }
 
+.nav .nav-create+.nav-create {
+  margin-top: 6px
+}
+
 .sidebar-bottom {
   margin-top: auto;
   padding-top: 60px
@@ -2009,6 +2013,106 @@ dialog .button-row {
 
 .table-scroll {
   position: relative
+}
+
+/* Upload zone */
+.upload-zone {
+  border: 2px dashed #d2dcc8;
+  border-radius: 11px;
+  background: #fafcf7;
+  transition: border-color .15s, background .15s;
+  cursor: pointer
+}
+
+.upload-zone:hover,
+.upload-zone.dragover {
+  border-color: #92b074;
+  background: #f4f8ee
+}
+
+.upload-zone-content {
+  width: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 34px 20px;
+  text-align: center;
+  cursor: pointer
+}
+
+.upload-zone-content .icon {
+  width: 28px;
+  height: 28px;
+  color: #7a9867;
+  margin-bottom: 4px
+}
+
+.upload-zone-content b {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  color: #3a5535
+}
+
+.upload-zone-content small {
+  font-size: 11px;
+  color: #829a75
+}
+
+.upload-zone-content:focus-visible {
+  outline: 2px solid #3d6a2a;
+  outline-offset: 3px
+}
+
+.job-settings {
+  margin-top: 22px
+}
+
+/* Job flow steps */
+.job-flow {
+  margin-top: 24px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line)
+}
+
+.flow-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #8a9688
+}
+
+.flow-step {
+  padding: 6px 10px;
+  border: 1px solid #e0e7d8;
+  border-radius: 6px;
+  background: #fff;
+  white-space: nowrap
+}
+
+.flow-step.active {
+  border-color: #92b074;
+  background: #f1f6e9;
+  color: #3d6a2a;
+  font-weight: 600
+}
+
+.flow-step.done {
+  border-color: #6ba34e;
+  background: #e7f0d9;
+  color: #3a6a24;
+  font-weight: 600
+}
+
+.flow-arrow {
+  color: #b8c5ad;
+  font-size: 13px
 }
 
 @media(max-width:700px) {

@@ -11,14 +11,15 @@ thay thế khi mất hoặc dừng; job gắn với máy được khôi phục t
    bổ sung; không ALTER hay xóa dữ liệu các bảng cũ.
 2. Làm [hướng dẫn S3 và phát hành agent](S3_SETUP.md) để tạo một bucket dùng chung, cấp quyền
    checkpoint cho API, upload release và cấp URL HTTPS bền vững.
-   Đóng gói toàn bộ file Python ở gốc `node-agent/` (bao gồm `managed.py`) thành
-   archive có `agent.py` ở gốc. Ví dụ từ thư mục gốc repo:
+   Đóng gói từ thư mục gốc repo bằng Python (dùng được trên Windows và Linux):
 
    ```sh
-   tar -czf /tmp/node-agent-recovery.tar.gz --exclude=tests --exclude=__pycache__ --exclude='*.pyc' --exclude=.venv --exclude='.env*' --exclude='.state*' -C node-agent .
-   sha256sum /tmp/node-agent-recovery.tar.gz
+   python node-agent/package_agent.py
    ```
 
+   Kết quả in đường dẫn `dist/node-agent-<sha256>.tar.gz` và hash; có thêm file
+   `.sha256` và manifest `.json` để kiểm tra. Gói chỉ chứa code và requirements,
+   không chứa state, credentials hoặc cache; `agent.py` nằm ngay ở gốc archive.
    Đưa archive lên URL HTTPS bất biến do operator quản lý, có thể tải từ AWS/GCP.
    Không dùng presigned URL hết hạn nhanh: VM có thể được cấp sau khi chờ capacity.
 3. Cấu hình `.env` / `.env.local`:

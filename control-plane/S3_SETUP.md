@@ -136,30 +136,28 @@ Không thay role sẵn có bằng role mới nếu role cũ còn cấp các quy�
 ## 3. Đóng gói và upload vào agent/releases/
 
 **Dùng lại bucket ở bước 1, upload gói agent vào `agent/releases/`.**
-Bạn thao tác trên máy có mã nguồn repo, ví dụ laptop Ubuntu/WSL.
+Bạn thao tác trên máy có mã nguồn repo, Windows hoặc Linux đều được.
 
-### 3.1. Tạo file nếu chưa có
+### 3.1. Tạo gói phát hành
 
 Mở terminal tại thư mục gốc **`spulti-cloud`** (thư mục chứa `node-agent/`):
 
-```bash
-tar -czf /tmp/node-agent-recovery.tar.gz \
-  --exclude=tests --exclude=__pycache__ --exclude='*.pyc' \
-  --exclude=.venv --exclude='.env*' --exclude='.state*' \
-  -C node-agent .
-sha256sum /tmp/node-agent-recovery.tar.gz
+```text
+python node-agent/package_agent.py
 ```
 
-Nếu đã tạo file rồi, chỉ chạy `sha256sum` để lấy hash của file đó. Hash là chuỗi
-64 ký tự đứng trước tên file; lưu lại để dùng ở bước 5. Nén lại có thể đổi hash.
+Lệnh in đường dẫn archive và SHA256, đồng thời tạo file `.sha256` và manifest
+`.json` cạnh archive. Tên archive là `dist/node-agent-<sha256>.tar.gz`; cùng nội
+dung tạo cùng hash, thay đổi code tạo một tên mới. Giữ nguyên bản cũ vì các
+attempt đã lưu có thể vẫn cần tải bản đó.
 
-File nằm tại **`/tmp/node-agent-recovery.tar.gz`**. Kiểm tra nội dung:
+Kiểm tra nội dung bằng đường dẫn archive vừa được in:
 
-```bash
-tar -tzf /tmp/node-agent-recovery.tar.gz
+```text
+tar -tzf dist/node-agent-<sha256>.tar.gz
 ```
 
-Danh sách phải có `./agent.py`, `./managed.py` và các module đồng cấp. Không để
+Danh sách phải có `agent.py`, `managed.py` và các module đồng cấp. Không để
 archive chứa credentials, checkpoint hoặc dữ liệu riêng. Gói này sẽ được phép
 tải công khai qua CloudFront ở bước 4.
 
@@ -168,28 +166,20 @@ tải công khai qua CloudFront ở bước 4.
 1. Mở **S3 → bucket ở bước 1 → tab Objects**.
 2. Bấm **Create folder**, đặt tên `agent`, rồi mở thư mục đó.
 3. Tạo tiếp thư mục `releases`, mở nó.
-4. Tạo tiếp thư mục tên `v1`, mở nó.
-5. Bấm **Upload → Add files**, chọn `/tmp/node-agent-recovery.tar.gz`.
-6. Bấm **Upload**, đợi trạng thái thành công.
+4. Bấm **Upload → Add files**, chọn `dist/node-agent-<sha256>.tar.gz` vừa tạo.
+5. Bấm **Upload**, đợi trạng thái thành công.
 
-Nếu hộp chọn file khó tìm `/tmp`, copy file sang thư mục dễ tìm trên cùng máy:
-
-```bash
-cp /tmp/node-agent-recovery.tar.gz ~/Downloads/node-agent-recovery.tar.gz
-```
-
-Lệnh copy cần thư mục `~/Downloads` tồn tại. Với WSL, có thể mở đường dẫn
-`\\wsl$` trong Windows Explorer để lấy file từ filesystem của distro. Copy không
-đổi hash. Nếu file nằm trên server, tải về máy đang mở trình duyệt trước.
+Thư mục `dist/` nằm ngay trong repo trên laptop. Nếu file nằm trên server,
+tải về máy đang mở trình duyệt trước; copy không đổi hash.
 
 Sau khi upload, object key (đường dẫn bên trong bucket) phải là:
 
 ```text
-agent/releases/v1/node-agent-recovery.tar.gz
+agent/releases/node-agent-<sha256>.tar.gz
 ```
 
 **Xong bước 3 khi:** thấy file ở đúng đường dẫn trên trong bucket dùng chung.
-Lần phát hành sau dùng thư mục mới như `v2`; không ghi đè file của `v1` đang dùng.
+Lần phát hành sau có hash và tên file mới; không ghi đè/xóa release đang dùng.
 
 Quyền upload là quyền của **tài khoản đăng nhập Console**, không phải role EC2
 ở bước 2. Nếu upload báo AccessDenied, cần quản trị viên cấp `s3:PutObject` trên
@@ -283,7 +273,7 @@ không cần tạo OAC thứ hai. Xem [hướng dẫn OAC của AWS](https://doc
 Ghép **Distribution domain name** ở 4.1 với object key ở 3.2. Ví dụ:
 
 ```text
-https://d123example.cloudfront.net/agent/releases/v1/node-agent-recovery.tar.gz
+https://d123example.cloudfront.net/agent/releases/node-agent-<sha256>.tar.gz
 ```
 
 Thay domain ví dụ bằng domain thật, thử mở link trong trình duyệt: file phải tải
@@ -291,7 +281,7 @@ Thay domain ví dụ bằng domain thật, thử mở link trong trình duyệt:
 
 ```bash
 curl --fail --location \
-  'https://DISTRIBUTION_DOMAIN/agent/releases/v1/node-agent-recovery.tar.gz' \
+  'https://DISTRIBUTION_DOMAIN/agent/releases/node-agent-<sha256>.tar.gz' \
   --output /tmp/node-agent-downloaded.tar.gz
 sha256sum /tmp/node-agent-downloaded.tar.gz
 ```

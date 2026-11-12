@@ -38,6 +38,11 @@ let draft = {},
   sshKeys = [];
 let routeBusy = false,
   actionBusy = false;
+let jobFile = null,
+  jobFileName = '',
+  jobFileReadVersion = 0,
+  jobLaunchConfigured = false;
+let jobSettings = {total_steps: 1, checkpoint_every: 20, step_delay: 0, vcpu: 2, ram_gib: 4, provider: '', optimization_mode: 'BALANCED'};
 
 async function api(path, {
   method = 'GET',
@@ -83,6 +88,9 @@ async function api(path, {
 }
 
 function authView() {
+  jobFile = null;
+  jobFileName = '';
+  jobFileReadVersion++;
   const register = authMode === 'register';
   app.innerHTML = `<main class="auth-page" id="content"><section class="auth-story"><a class="brand" href="#/overview"><img src="./mark.svg" alt=""><span>spulti<span>cloud</span></span></a><div class="auth-copy"><div class="eyebrow">SPOT COMPUTE · MULTI-CLOUD</div><h1>Tài nguyên linh hoạt.<br><em>Chi phí trong tầm tay.</em></h1><p>Chọn cấu hình phù hợp, theo dõi máy và tiếp tục công việc từ checkpoint.</p><div class="auth-features"><span>AWS & GCP</span><span>Spot instances</span><span>Checkpoint recovery</span></div></div><p class="auth-footer">Spulti Cloud / Control-plane console</p></section><section class="auth-form-area"><form id="auth-form" class="auth-form"><div class="eyebrow">CHÀO MỪNG ĐẾN SPULTI</div><br><h2>${register ? 'Tạo tài khoản' : 'Đăng nhập workspace'}</h2><p>${register ? 'Bắt đầu quản lý tài nguyên của bạn.' : 'Theo dõi tài nguyên và chi phí tại một nơi.'}</p>
   ${register ? field('Họ và tên', 'name', '', 'required maxlength="50" autocomplete="name"') + field('Email', 'email', '', 'type="email" required autocomplete="email"') : ''}
@@ -92,7 +100,7 @@ function authView() {
 }
 
 function shell() {
-  app.innerHTML = `<div class="app-shell"><aside class="sidebar" id="sidebar"><a class="brand" href="#/overview"><img src="./mark.svg" alt=""><span>spulti<span>cloud</span></span></a><div class="workspace"><span class="workspace-icon">${icon('cloud')}</span><div>Cloud workspace<small>Hạ tầng của bạn</small></div></div><p class="nav-label">WORKSPACE</p><nav class="nav" aria-label="Điều hướng chính"><a href="#/overview" data-nav="overview">${icon('grid')} Tổng quan</a><a href="#/machines" data-nav="machines">${icon('server')} Danh sách máy</a><a href="#/ssh-keys" data-nav="ssh-keys">${icon('key')} SSH public keys</a><a href="#/create" data-nav="create" class="nav-create">${icon('plus')} Tạo máy mới</a></nav><div class="sidebar-bottom"><div class="infra-note"><b>Thiết kế cho công việc liên tục</b>Checkpoint lưu trạng thái công việc để tiếp tục khi máy Spot bị thu hồi.</div><div class="user"><span class="avatar">${esc(user.name.slice(0,1).toUpperCase())}</span><div class="user-info"><b>${esc(user.name)}</b><small>${esc(user.email)}</small></div><button class="icon-button" data-action="logout" aria-label="Đăng xuất">${icon('logout')}</button></div></div></aside><div class="main-column"><header class="topbar"><div class="breadcrumb"><button class="icon-button mobile-toggle" data-action="menu" aria-label="Mở menu" aria-controls="sidebar" aria-expanded="false">${icon('menu')}</button><span>Workspace</span><span>/</span><b id="breadcrumb">Tổng quan</b></div><div class="topbar-right"><span class="api-indicator"><i class="dot"></i><span id="last-updated">Đang tải dữ liệu</span></span><span class="avatar">${esc(user.name.slice(0,1).toUpperCase())}</span></div></header><main id="content" tabindex="-1"></main></div></div>`;
+  app.innerHTML = `<div class="app-shell"><aside class="sidebar" id="sidebar"><a class="brand" href="#/overview"><img src="./mark.svg" alt=""><span>spulti<span>cloud</span></span></a><div class="workspace"><span class="workspace-icon">${icon('cloud')}</span><div>Cloud workspace<small>Hạ tầng của bạn</small></div></div><p class="nav-label">WORKSPACE</p><nav class="nav" aria-label="Điều hướng chính"><a href="#/overview" data-nav="overview">${icon('grid')} Tổng quan</a><a href="#/machines" data-nav="machines">${icon('server')} Danh sách máy</a><a href="#/ssh-keys" data-nav="ssh-keys">${icon('key')} SSH public keys</a><a href="#/create" data-nav="create" class="nav-create">${icon('plus')} Tạo máy mới</a><a href="#/submit-job" data-nav="submit-job" class="nav-create">${icon('upload')} Tạo job mới</a></nav><div class="sidebar-bottom"><div class="infra-note"><b>Thiết kế cho công việc liên tục</b>Checkpoint lưu trạng thái công việc để tiếp tục khi máy Spot bị thu hồi.</div><div class="user"><span class="avatar">${esc(user.name.slice(0,1).toUpperCase())}</span><div class="user-info"><b>${esc(user.name)}</b><small>${esc(user.email)}</small></div><button class="icon-button" data-action="logout" aria-label="Đăng xuất">${icon('logout')}</button></div></div></aside><div class="main-column"><header class="topbar"><div class="breadcrumb"><button class="icon-button mobile-toggle" data-action="menu" aria-label="Mở menu" aria-controls="sidebar" aria-expanded="false">${icon('menu')}</button><span>Workspace</span><span>/</span><b id="breadcrumb">Tổng quan</b></div><div class="topbar-right"><span class="api-indicator"><i class="dot"></i><span id="last-updated">Đang tải dữ liệu</span></span><span class="avatar">${esc(user.name.slice(0,1).toUpperCase())}</span></div></header><main id="content" tabindex="-1"></main></div></div>`;
 }
 const content = () => document.querySelector('#content');
 const period = () => `<select class="period-select" data-control="period" aria-label="Khoảng thời gian">${[7,30,90].map(d => `<option value="${d}" ${days===d?'selected':''}>${d} ngày gần đây</option>`).join('')}</select>`;
@@ -138,7 +146,8 @@ async function render(quiet = false) {
     overview: 'Tổng quan',
     machines: 'Danh sách máy',
     create: 'Tạo máy mới',
-    'ssh-keys': 'SSH public keys'
+    'ssh-keys': 'SSH public keys',
+    'submit-job': 'Tạo job mới'
   } [newPage] || 'Workspace';
   if (!quiet) content().innerHTML = '<div class="loading" role="status">Đang tải dữ liệu…</div>';
   try {
@@ -173,6 +182,12 @@ async function render(quiet = false) {
     } else if (route === '/ssh-keys') {
       sshKeys = await api('/api/ssh-keys');
       html = keysView();
+    } else if (route === '/submit-job') {
+      const [options, keys] = await Promise.all([api('/api/dashboard/options'), api('/api/ssh-keys')]);
+      if (currentEpoch !== epoch || !user) return;
+      jobLaunchConfigured = options.launch_configured;
+      sshKeys = keys;
+      html = submitJobView();
     } else html = empty('Không tìm thấy trang', 'Chọn một trang trong menu.', '<a class="button" href="#/overview">Về tổng quan</a>');
     if (currentEpoch !== epoch || !user) return;
     const expanded = quiet ? [...content().querySelectorAll('details')].map(el => el.open) : [];
@@ -267,6 +282,85 @@ function reviewView() {
 
 function keysView() {
   return heading('SSH public keys', 'Public key được đưa vào máy khi khởi tạo. Giữ private key trên máy của bạn.') + `<div class="detail-grid"><section class="panel form-panel"><h2>Thêm public key</h2><p>Dán nội dung file .pub của bạn.</p><form id="ssh-form">${field('Tên key','name','','required maxlength="100" placeholder="Ví dụ: laptop-ca-nhan"')}<br><label class="field"><span>SSH public key</span><textarea name="public_key" required maxlength="16384" placeholder="ssh-ed25519 AAAA…"></textarea></label><div id="form-error" role="alert"></div><div class="form-actions"><a href="#/create">Về tạo máy</a><button class="button primary" type="submit">Thêm key</button></div></form></section><section class="panel"><div class="panel-heading"><h2>Public keys của bạn (${sshKeys.length})</h2></div>${sshKeys.length?sshKeys.map(key=>`<div class="key-row"><b>${esc(key.name)}</b><code>${esc(key.fingerprint)}</code><small class="cell-note">Thêm lúc ${date(key.created_at)}</small></div>`).join(''):empty('Chưa có SSH key','Thêm key để có thể tạo và truy cập máy.')}</section></div>`;
+}
+
+function submitJobView() {
+  const pending = pendingJob();
+  if (pending) return heading('Xác minh yêu cầu tạo job', 'Yêu cầu được giữ trong tab này để gửi lại an toàn khi mất kết nối.') +
+    `<section class="panel form-panel"><h2>${esc(pending.body.filename)}</h2><p>Kiểm tra hoặc gửi lại yêu cầu để mở đúng job và máy đã tạo.</p><form id="submit-job-form"><div id="form-error" role="alert"></div><button type="submit" class="button primary">Kiểm tra / gửi lại job</button></form></section>`;
+  const hasFile = jobFile && jobFileName;
+  return heading('Tạo job mới', 'Upload file Python, hệ thống tự tạo job và khởi chạy trên Spot.') +
+    `<div class="create-grid"><div><section class="panel form-panel"><h2>Upload & tạo job</h2><p>Upload file Python (UTF-8, tối đa 16 KiB), chọn cấu hình và triển khai trên Spot.</p>
+    <form id="submit-job-form">
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" name="file" id="job-file-input" accept=".py" hidden>
+      <button type="button" class="upload-zone-content" data-action="pick-file" aria-label="Chọn file Python">
+        ${hasFile
+          ? `${icon('file')}<b>${esc(jobFileName)}</b><small>${number(jobFile.length)} ký tự · Nhấp để đổi file</small>`
+          : `${icon('upload')}<b>Upload file Python</b><small>Ví dụ: file_training.py</small>`}
+      </button>
+    </div>
+    <div class="form-grid job-settings">
+      ${field('Số bước chạy', 'total_steps', jobSettings.total_steps, 'type="number" required min="1" max="10000000" step="1"', '1 = chạy toàn bộ file một lượt. Mỗi bước sẽ chạy lại file.')}
+      ${field('Checkpoint mỗi', 'checkpoint_every', jobSettings.checkpoint_every, 'type="number" required min="0" step="1"', 'Số bước giữa các checkpoint. 0 = chỉ lưu theo thời gian và khi dừng.')}
+      ${field('vCPU tối thiểu', 'vcpu', jobSettings.vcpu, 'type="number" required min="1" step="1"')}
+      ${field('RAM tối thiểu (GiB)', 'ram_gib', jobSettings.ram_gib, 'type="number" required min="0.1" step="0.1"')}
+      <label class="field"><span>Nhà cung cấp</span><select name="provider">${[['', 'Tự động (AWS / GCP)'], ['AWS', 'AWS'], ['GCP', 'GCP']].map(([v, label]) => `<option value="${v}" ${jobSettings.provider === v ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label class="field"><span>Tối ưu</span><select name="optimization_mode">${Object.entries(modes).map(([v, label]) => `<option value="${v}" ${jobSettings.optimization_mode === v ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></label>
+      ${field('Nghỉ giữa các bước (giây)', 'step_delay', jobSettings.step_delay, 'type="number" required min="0" max="60" step="0.001"')}
+    </div>
+    <div class="job-flow">
+      <div class="flow-steps">
+        <span class="flow-step ${hasFile ? 'done' : 'active'}">Upload file</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">Đăng ký job UUID</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">Chọn máy Spot</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">Tạo máy</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">Node Agent tự chạy</span>
+      </div>
+    </div>
+    ${!sshKeys.length ? '<p class="inline-error">Cần thêm SSH public key trước khi tạo máy. <a href="#/ssh-keys">Thêm public key</a></p>' : ''}
+    ${!jobLaunchConfigured ? '<p class="inline-error">Hệ thống chưa cấu hình vùng và image để tạo máy.</p>' : ''}
+    <div id="form-error" role="alert"></div>
+    <div class="form-actions">
+      <a href="#/overview">Hủy</a>
+      <button type="submit" class="button primary" ${!hasFile || !sshKeys.length || !jobLaunchConfigured ? 'disabled' : ''}>${icon('upload')} Upload & Tạo job</button>
+    </div>
+    </form>
+    </section></div>
+    <aside class="aside-note">${icon('cloud')}<h3>Luồng tự động</h3><p>Upload file → Đăng ký job → Chọn máy Spot → Tạo máy → Node Agent tự chạy.</p><hr><p>Hệ thống chọn máy theo tài nguyên và chế độ tối ưu của bạn. Đĩa mặc định 30 GiB.</p><p>Dùng <code>spulti.state</code> cho trạng thái JSON hoặc lưu file trong <code>SPULTI_CHECKPOINT_DIR</code> để khôi phục từ checkpoint gần nhất. File được đồng bộ định kỳ và khi dừng.</p><p>Thư viện bên ngoài cần có sẵn trong image của máy.</p></aside>
+    </div>`;
+}
+
+function pendingJob() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('spulti.pending-job'));
+    return saved?.userId === user?.id ? saved : null;
+  } catch { return null; }
+}
+
+async function selectJobFile(file) {
+  if (actionBusy || pendingJob()) return;
+  const version = ++jobFileReadVersion, owner = user?.id;
+  try {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.py$/.test(file.name) || file.name.length > 128) throw new Error('Tên file .py chỉ gồm chữ không dấu, số, dấu chấm, gạch ngang hoặc gạch dưới.');
+    if (!file.size || file.size > 16384) throw new Error('File phải có nội dung và không quá 16 KiB.');
+    const source = new TextDecoder('utf-8', {fatal: true}).decode(await file.arrayBuffer());
+    if (version !== jobFileReadVersion || owner !== user?.id || actionBusy) return;
+    jobFile = source;
+    jobFileName = file.name;
+    if (page === '/submit-job') {
+      const zone = document.querySelector('.upload-zone-content');
+      if (zone) zone.innerHTML = `${icon('file')}<b>${esc(jobFileName)}</b><small>${number(file.size)} byte · Nhấp để đổi file</small>`;
+      const submit = document.querySelector('#submit-job-form [type="submit"]');
+      if (submit) submit.disabled = !sshKeys.length || !jobLaunchConfigured;
+    }
+  } catch (error) {
+    if (owner === user?.id) notify(error instanceof TypeError ? 'File cần dùng mã hóa UTF-8.' : error.message, true);
+  }
 }
 
 function readRequirements(form) {
@@ -409,12 +503,42 @@ app.addEventListener('submit', async event => {
       });
       notify('Đã thêm SSH public key.');
       await render();
+    } else if (form.id === 'submit-job-form') {
+      let saved = pendingJob();
+      if (!saved) {
+        if (!jobFile || !jobFileName) throw new Error('Vui lòng chọn file Python.');
+        const data = Object.fromEntries(new FormData(form));
+        const body = {filename: jobFileName, source_code: jobFile, provider: data.provider || null, optimization_mode: data.optimization_mode};
+        for (const name of ['total_steps', 'checkpoint_every', 'step_delay', 'vcpu', 'ram_gib']) body[name] = Number(data[name]);
+        saved = {userId: user.id, key: uniqueId(), body};
+        sessionStorage.setItem('spulti.pending-job', JSON.stringify(saved));
+      }
+      if (page === startedPage) content().innerHTML = submitJobView();
+      const retry = document.querySelector('#submit-job-form [type="submit"]');
+      if (retry) retry.disabled = true;
+      const result = await api('/api/dashboard/jobs', {
+        method: 'POST',
+        body: saved.body,
+        headers: {'Idempotency-Key': saved.key}
+      });
+      sessionStorage.removeItem('spulti.pending-job');
+      if (user?.id !== startedUser) return;
+      jobFile = null;
+      jobFileName = '';
+      notify(`Đã ghi nhận job trên ${result.candidate.provider}. Worker đang xử lý yêu cầu tạo máy.`);
+      if (page === startedPage) location.hash = `/machines/${result.machine.id}`;
     }
   } catch (error) {
+    if (form.id === 'submit-job-form' && [400, 403, 404, 409, 422].includes(error.status)) sessionStorage.removeItem('spulti.pending-job');
+    if (form.id === 'submit-job-form' && user?.id === startedUser && page === startedPage) content().innerHTML = submitJobView();
     formError(error);
   } finally {
     actionBusy = false;
     if (submit?.isConnected) submit.disabled = false;
+    if (form.id === 'submit-job-form' && pendingJob()) {
+      const retry = document.querySelector('#submit-job-form [type="submit"]');
+      if (retry) retry.disabled = false;
+    }
   }
 });
 
@@ -445,6 +569,9 @@ app.addEventListener('click', async event => {
     user = null;
     epoch++;
     sessionStorage.removeItem('spulti.session');
+    jobFile = null;
+    jobFileName = '';
+    jobFileReadVersion++;
     draft = {};
     candidates = [];
     step = 1;
@@ -507,6 +634,10 @@ app.addEventListener('click', async event => {
       await navigator.clipboard.writeText(text);
       notify('Đã sao chép lệnh SSH.');
     }
+    if (action === 'pick-file') {
+      const input = document.querySelector('#job-file-input');
+      if (input) input.click();
+    }
   } catch (error) {
     formError(error);
   } finally {
@@ -520,6 +651,10 @@ app.addEventListener('change', event => {
     render();
   }
   if (event.target.name === 'candidate') selected = Number(event.target.value);
+  if (event.target.id === 'job-file-input' && event.target.files[0]) {
+    selectJobFile(event.target.files[0]);
+    event.target.value = '';
+  }
   if (['provider', 'region'].includes(event.target.name) && event.target.form?.id === 'requirements-form') {
     const form = event.target.form,
       p = form.elements.provider.value,
@@ -532,6 +667,29 @@ app.addEventListener('change', event => {
   }
 });
 window.addEventListener('hashchange', () => render());
+app.addEventListener('input', event => {
+  if (event.target.form?.id === 'submit-job-form' && event.target.name in jobSettings) jobSettings[event.target.name] = event.target.value;
+});
+app.addEventListener('dragover', event => {
+  const zone = event.target.closest('#upload-zone');
+  if (zone) {
+    event.preventDefault();
+    zone.classList.add('dragover');
+  }
+});
+app.addEventListener('dragleave', event => {
+  const zone = event.target.closest('#upload-zone');
+  if (zone) zone.classList.remove('dragover');
+});
+app.addEventListener('drop', event => {
+  const zone = event.target.closest('#upload-zone');
+  if (!zone) return;
+  event.preventDefault();
+  zone.classList.remove('dragover');
+  const file = event.dataTransfer?.files[0];
+  if (!file) return;
+  selectJobFile(file);
+});
 document.querySelector('.skip-link').addEventListener('click', event => {
   event.preventDefault();
   const target = content();
