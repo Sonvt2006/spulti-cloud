@@ -197,13 +197,11 @@ def _prepare_attempts(
                 request_id=request_id,
                 disk_size_gb=payload.disk_size_gb,
                 # GPUs already included in the catalog machine type. No N1 add-ons.
-                startup_script=(
-                    startup_script(
-                        str(payload.job_id) if payload.job_id else None,
-                        request_id,
-                        candidate.provider,
-                        payload.startup_script,
-                    )
+                startup_script=startup_script(
+                    str(payload.job_id) if payload.job_id else None,
+                    request_id,
+                    candidate.provider,
+                    payload.startup_script,
                 ),
             )
             if candidate.provider == "AWS":

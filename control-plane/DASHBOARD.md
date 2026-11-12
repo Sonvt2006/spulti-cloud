@@ -19,6 +19,8 @@ hiện tại, không cần Node.js, một web server khác hoặc một database
   disk, provider, region/zone, mục tiêu tối ưu, job ID và startup script tùy chọn.
   Ước tính số giờ trên form chỉ để so sánh, không phải lịch tự dừng máy.
 - Thêm/liệt kê SSH public key để người dùng có thể hoàn thành luồng tạo máy.
+- Tạo job từ file Python: upload → chọn tài nguyên/provider/chế độ tối ưu →
+  đăng ký job và tạo máy → managed agent tự tải và chạy chương trình.
 - Giao diện responsive, bảng cuộn ngang trên điện thoại; điều hướng bàn phím,
   thông báo lỗi/đang tải/trống và xác nhận trước khi xóa.
 
@@ -43,8 +45,8 @@ flowchart LR
     API --> S3[(S3 checkpoints)]
 ```
 
-Dashboard dùng các API auth/SSH/machines hiện có; API mới chỉ cung cấp mô hình
-đọc tổng hợp và tính chi phí. Tất cả `/api/dashboard*` đều bắt buộc đăng nhập và
+Dashboard dùng các API auth/SSH/machines hiện có; API dashboard cung cấp mô hình
+đọc tổng hợp, tính chi phí và đăng ký managed job. Tất cả `/api/dashboard*` đều bắt buộc đăng nhập và
 lọc theo chủ sở hữu. Trình duyệt không nhận AWS credentials, launch network config,
 agent token, nội dung script đang chạy hoặc dữ liệu checkpoint nhúng.
 
@@ -94,7 +96,34 @@ local. Không chạy `app.seed` để tạo số liệu cho dashboard trên prod
   region và zone; catalog offerings phải khớp và có giá Spot.
 - SSH public key của người dùng, quota cloud và quyền tạo/xóa instance của worker.
 - Với managed job: public API URL, agent release URL/hash và S3 được cấu hình theo
-  [RECOVERY.md](RECOVERY.md). Nhập job ID đã tạo bằng CLI vào form nâng cao.
+  [RECOVERY.md](RECOVERY.md). Có thể upload trực tiếp ở **Tạo job mới**, hoặc nhập
+  job ID đã tạo bằng CLI vào form tạo máy nâng cao.
+
+## Upload Python và tạo job
+
+Mở `/dashboard/#/submit-job`, chọn hoặc kéo thả file `.py` UTF-8 tối đa 16 KiB.
+Tên file dùng chữ không dấu, số, dấu chấm, gạch ngang hoặc gạch dưới. Mặc định
+`total_steps=1`, `step_delay=0`: toàn bộ file chạy một lượt. Chỉ tăng số bước khi
+chương trình được thiết kế chạy lặp và lưu trạng thái qua `spulti.state`.
+
+Chọn vCPU/RAM tối thiểu, AWS/GCP hoặc tự động, và chế độ tối ưu. Máy dùng đĩa
+30 GiB; cần đăng ký SSH public key trước. Thư viện Python bên ngoài cần có sẵn
+trong image. Form dùng `POST /api/dashboard/jobs` với `Idempotency-Key` UUID;
+source, job và ý định tạo máy được lưu cùng giao dịch. Lỗi quota, cấu hình launch
+hoặc managed agent không để lại job dở dang. API chỉ kiểm tra cú pháp, không chạy
+file trên control plane.
+
+Nếu mất phản hồi, tab giữ nguyên payload và key trong `sessionStorage`, kể cả
+khi tải lại trang. Bấm **Kiểm tra / gửi lại job** để lấy đúng job/máy cũ.
+Không gửi một yêu cầu mới khi chưa xác định kết quả yêu cầu đang chờ.
+
+Managed agent cấp thư mục file checkpoint mặc định ở
+`<state-dir>/files/<job-id>` và truyền vào chương trình qua `SPULTI_CHECKPOINT_DIR`.
+Ví dụ `node-agent/examples/file_training.py` dùng thư mục này; chương trình phải
+ghi file nguyên tử để đồng bộ snapshot nhất quán. File đồng bộ mặc định mỗi
+300 giây, theo bước nếu bật, khi dừng và khi hoàn thành. Các bước chưa checkpoint
+có thể chạy lại sau recovery. Cần phát hành lại archive node agent và cập nhật
+URL/hash sau thay đổi `managed.py` để VM mới nhận hỗ trợ này.
 
 Ở local, chạy stack theo [README.local.md](README.local.md), rồi mở
 `http://localhost:8080/dashboard/` (hoặc `http://localhost:8000/dashboard/` nếu chạy

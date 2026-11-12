@@ -10,13 +10,14 @@ import logging
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 METADATA_HOST = "http://169.254.169.254"
+UTC = timezone.utc  # noqa: UP017 - Ubuntu 22.04 uses Python 3.10.
 
 
 @dataclass(frozen=True)
@@ -47,7 +48,8 @@ class StopRequest:
             budget = self.timeout
             if notice.deadline_at:
                 remaining = (
-                    datetime.fromisoformat(notice.deadline_at) - datetime.now(UTC)
+                    datetime.fromisoformat(notice.deadline_at.replace("Z", "+00:00"))
+                    - datetime.now(UTC)
                 ).total_seconds()
                 # An overdue/hibernate notice can arrive while the VM is still
                 # alive. Leave one short attempt to report it, with no waiting.
@@ -121,7 +123,7 @@ class MetadataPoller:
             "hibernate",
         }:
             raise ValueError("Invalid AWS interruption metadata")
-        deadline = datetime.fromisoformat(data["time"])
+        deadline = datetime.fromisoformat(data["time"].replace("Z", "+00:00"))
         if deadline.tzinfo is None:
             raise ValueError("AWS interruption time must include timezone")
         return InterruptionNotice("aws", data["action"], deadline.isoformat())

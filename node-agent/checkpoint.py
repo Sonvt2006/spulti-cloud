@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from spulti import encode_state
 
 SCHEMA_VERSION = 2  # Built-in demo; submitted scripts use version 3.
+UTC = timezone.utc  # noqa: UP017 - Ubuntu 22.04 uses Python 3.10.
 
 
 def utc_now() -> str:

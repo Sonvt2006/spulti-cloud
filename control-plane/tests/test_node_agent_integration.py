@@ -238,6 +238,8 @@ class ControlPlaneE2E(AgentHTTPTestCase):
             "valid-id",
             "--control-plane-url",
             "http://example.com",
+            "--state-dir",
+            str(Path(self.tmp.name) / "https-validation"),
         ]
         r = subprocess.run(
             cmd, cwd=AGENT.parent, env=env, capture_output=True, text=True, timeout=8

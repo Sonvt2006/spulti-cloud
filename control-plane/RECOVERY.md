@@ -15,10 +15,12 @@ thay thế khi mất hoặc dừng; job gắn với máy được khôi phục t
    archive có `agent.py` ở gốc. Ví dụ từ thư mục gốc repo:
 
    ```sh
-   tar -czf /tmp/node-agent-recovery.tar.gz --exclude=tests --exclude=__pycache__ --exclude='*.pyc' --exclude=.venv --exclude='.env*' --exclude='.state*' -C node-agent .
-   sha256sum /tmp/node-agent-recovery.tar.gz
+   python node-agent/package_agent.py
    ```
 
+   Kết quả in đường dẫn `dist/node-agent-<sha256>.tar.gz` và hash; có thêm file
+   `.sha256` và manifest `.json` để kiểm tra. Gói chỉ chứa code và requirements,
+   không chứa state, credentials hoặc cache; `agent.py` nằm ngay ở gốc archive.
    Đưa archive lên URL HTTPS bất biến do operator quản lý, có thể tải từ AWS/GCP.
    Không dùng presigned URL hết hạn nhanh: VM có thể được cấp sau khi chờ capacity.
 3. Cấu hình `.env` / `.env.local`:
@@ -108,8 +110,13 @@ Sau đó gọi `POST /api/machines`:
 ```
 
 Job phải thuộc cùng người dùng, chưa hoàn thành và chưa gắn với máy khác. Có thể
-sử dụng job demo tạo qua `POST /api/agent/jobs`. Không truyền `job_id` thì vẫn có
-heartbeat và recovery VM; không có job/checkpoint để tự khôi phục workload.
+sử dụng job demo tạo qua `POST /api/agent/jobs`. Không truyền `job_id` thì hệ thống
+vẫn cài node-agent và lệnh `spulti-agent` để dùng sau khi SSH. Service được tạo
+nhưng chờ cấu hình job, không tự chạy workload hoặc cấp token job. Máy vẫn có
+recovery VM, nhưng chưa có heartbeat/job/checkpoint để tự khôi phục workload.
+Mọi máy đều cần URL HTTPS và SHA256 hợp lệ của gói agent; chỉ máy gắn job mới
+cần API HTTPS. Agent đã sửa tương thích Python 3.10 trên Ubuntu 22.04; cần phát
+hành lại archive đã sửa và cập nhật URL/hash để VM mới nhận bản này.
 
 Worker cấp credential riêng cho từng attempt trước khi gọi cloud, cài agent,
 truyền cấu hình qua file root-only và khởi chạy `agent.py managed` bằng service

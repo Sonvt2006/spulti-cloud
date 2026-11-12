@@ -35,9 +35,21 @@ def main(argv=None):
             program = PythonProgram(
                 source["source_code"], source["filename"], data["total_steps"]
             )
+        # Existing JSON-only jobs must keep their original checkpoint mode.
+        # Fresh uploads and jobs with a file snapshot get the managed file root.
+        checkpoint = (
+            client.get_checkpoint() if program and not args.checkpoint_dir else None
+        )
+        checkpoint_dir = args.checkpoint_dir
+        if (
+            checkpoint_dir is None
+            and program
+            and (checkpoint is None or checkpoint.get("file_snapshot"))
+        ):
+            checkpoint_dir = args.state_dir / "files"
         config = AgentConfig(
             job_id=job_id,
-            checkpoint_dir=args.checkpoint_dir,
+            checkpoint_dir=checkpoint_dir,
             file_sync_seconds=args.file_sync_seconds,
             total_steps=data["total_steps"],
             checkpoint_every=data["checkpoint_every"],

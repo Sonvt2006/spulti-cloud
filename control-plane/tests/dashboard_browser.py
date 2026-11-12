@@ -258,6 +258,68 @@ def run_browser(base_url, factory, output):
         page.get_by_role("button", name="Thêm key", exact=True).click()
         expect(page.locator(".key-row").filter(has_text="browser-key")).to_be_visible()
 
+        page.get_by_role("link", name="Tạo job mới", exact=True).click()
+        expect(
+            page.get_by_role("heading", name="Tạo job mới", exact=True)
+        ).to_be_visible()
+        expect(page.get_by_role("button", name="Upload & Tạo job")).to_be_disabled()
+        expect(page.locator('[name="total_steps"]')).to_have_value("1")
+        page.locator('[name="total_steps"]').fill("7")
+        page.locator('[name="checkpoint_every"]').fill("3")
+        page.locator('select[name="provider"]').select_option("GCP")
+        page.get_by_role("button", name="Chọn file Python").focus()
+        with page.expect_file_chooser() as chooser:
+            page.keyboard.press("Enter")
+        chooser.value.set_files(
+            {
+                "name": "browser_training.py",
+                "mimeType": "text/x-python",
+                "buffer": b"from spulti import state\nstate['value'] = 1\n",
+            }
+        )
+        expect(page.get_by_role("button", name="Upload & Tạo job")).to_be_enabled()
+        expect(page.locator('[name="total_steps"]')).to_have_value("7")
+        expect(page.locator('[name="checkpoint_every"]')).to_have_value("3")
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(output / "submit-job-mobile.png"), full_page=True)
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        page.screenshot(path=str(output / "submit-job-desktop.png"), full_page=True)
+        job_keys = []
+
+        def lose_first_job_response(route):
+            job_keys.append(route.request.headers.get("idempotency-key"))
+            response = route.fetch()
+            assert response.status == 201, response.text()
+            if len(job_keys) == 1:
+                route.abort("failed")
+            else:
+                route.fulfill(response=response)
+
+        page.route("**/api/dashboard/jobs", lose_first_job_response)
+        page.get_by_role("button", name="Upload & Tạo job").click()
+        expect(
+            page.get_by_role("heading", name="Xác minh yêu cầu tạo job")
+        ).to_be_visible()
+        page.reload()
+        page.get_by_role("button", name="Kiểm tra / gửi lại job").click()
+        page.wait_for_url("**/#/machines/*")
+        expect(page.get_by_role("heading", name="Job & checkpoint")).to_be_visible()
+        assert len(job_keys) == 2 and job_keys[0] == job_keys[1]
+        assert page.evaluate("sessionStorage.getItem('spulti.pending-job')") is None
+        with factory() as db:
+            bindings = db.scalars(
+                select(MachineJob).join(AgentJob).where(AgentJob.total_steps == 7)
+            ).all()
+            assert len(bindings) == 1, "Lost upload response created a duplicate job"
+            attempt = db.scalar(
+                select(InstanceAttempt)
+                .where(InstanceAttempt.machine_id == bindings[0].machine_id)
+                .order_by(InstanceAttempt.position)
+            )
+            assert attempt.provider == "GCP"
+        page.unroute("**/api/dashboard/jobs")
+
         # Render a hostile machine name as plain text, including error paths.
         page.get_by_role("link", name="Tổng quan", exact=True).click()
         expect(page.get_by_role("heading", name="Tổng quan workspace")).to_be_visible()
@@ -302,6 +364,19 @@ def run_browser(base_url, factory, output):
         page.get_by_role("button", name="Tạo tài khoản", exact=True).click()
         expect(page.get_by_role("heading", name="Tổng quan workspace")).to_be_visible()
         expect(page.get_by_role("heading", name="Chưa có máy phù hợp")).to_be_visible()
+        page.get_by_role("link", name="Tạo job mới", exact=True).click()
+        expect(
+            page.get_by_role("link", name="Thêm public key", exact=True)
+        ).to_be_visible()
+        page.locator("#job-file-input").set_input_files(
+            {
+                "name": "new_user.py",
+                "mimeType": "text/x-python",
+                "buffer": b"print(1)\n",
+            }
+        )
+        expect(page.locator(".upload-zone-content")).to_contain_text("new_user.py")
+        expect(page.get_by_role("button", name="Upload & Tạo job")).to_be_disabled()
         page.get_by_role("link", name="Tạo máy mới", exact=False).first.click()
         page.get_by_label("Tên máy", exact=True).fill("new-account-machine")
         page.get_by_role("button", name="Tìm máy phù hợp").click()
@@ -324,7 +399,7 @@ def run_browser(base_url, factory, output):
     )
     print(
         "preferred candidate, lost-response idempotency, delete, SSH keys, "
-        "errors, expiry, CSP."
+        "upload, job retry after lost response, job prerequisites, errors, expiry, CSP."
     )
 
 
@@ -350,9 +425,13 @@ def main():
             {
                 "SPULTI_LAUNCH_CONFIG": json.dumps(PROFILES),
                 "SPULTI_MAX_MACHINES_PER_USER": "10",
+                "SPULTI_PUBLIC_API_URL": "https://api.example.test",
+                "SPULTI_AGENT_RELEASE_URL": "https://releases.example.test/agent.tar.gz",
+                "SPULTI_AGENT_RELEASE_SHA256": "a" * 64,
             },
         ),
         patch("app.machines._wake_worker"),
+        patch("app.dashboard._wake_worker"),
     ):
         seed(factory)
         sock = socket.socket()
