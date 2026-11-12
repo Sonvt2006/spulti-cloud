@@ -264,8 +264,13 @@ def create_machine(
         agent_settings(require_api=payload.job_id is not None)
     except ValueError as exc:
         raise ManagerError(503, str(exc)) from exc
+
     if payload.job_id:
-        job = db.get(AgentJob, str(payload.job_id), with_for_update=True)
+        job = db.get(
+            AgentJob,
+            str(payload.job_id),
+            with_for_update=True,
+        )
         if job is None or job.user_id != user_id:
             raise ManagerError(404, "Không tìm thấy job")
         if job.status == "COMPLETED":

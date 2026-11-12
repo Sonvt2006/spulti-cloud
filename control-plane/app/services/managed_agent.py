@@ -40,19 +40,24 @@ def agent_settings(*, require_api: bool = True) -> tuple[str, str, str]:
             )
     if require_api and urlparse(base).query:
         raise ValueError("API URL must not contain a query string")
+
     if not re.fullmatch(r"[a-f0-9]{64}", digest):
         raise ValueError("Set SPULTI_AGENT_RELEASE_SHA256 to the agent archive SHA256")
+
     return base, release, digest
 
 
 def startup_script(
-    job_id: str | None, request_id: str, provider: str, user_script: str
+    job_id: str | None,
+    request_id: str,
+    provider: str,
+    user_script: str,
 ) -> str:
     base, release, digest = agent_settings(require_api=job_id is not None)
-    # The URL is an immutable operator-owned release, not an expiring presigned URL.
-    # User data is snapshotted, making cloud idempotency retries byte-for-byte stable.
-    # A plain SSH machine must not inherit a baked-in job or token from an image.
-    env_bootstrap = "rm -f /etc/spulti-agent.env\n"
+
+    env_bootstrap = ""
+
+    # Chỉ tạo cấu hình và token khi có job.
     if job_id is not None:
         config = {
             "SPULTI_CONTROL_PLANE_URL": base,
@@ -68,21 +73,34 @@ def startup_script(
             f"printf %s {shlex.quote(encoded)} | base64 -d > /etc/spulti-agent.env\n"
         )
     installer = INSTALL_SCRIPT.replace(
-        "SPULTI_CLOUD_PROVIDER=gcp", f"SPULTI_CLOUD_PROVIDER={provider.lower()}"
+        "SPULTI_CLOUD_PROVIDER=gcp",
+        f"SPULTI_CLOUD_PROVIDER={provider.lower()}",
     )
-    installer = installer.replace(":-gcp}", f":-{provider.lower()}}}")
+
+    installer = installer.replace(
+        ":-gcp}",
+        f":-{provider.lower()}}}",
+    )
+
     start = installer.index("ExecStart=/usr/bin/python3")
     end = installer.index("RestartSec=10", start)
+
     installer = (
         installer[:start]
         + (
-            "ExecStart=/usr/bin/python3 /opt/spulti-agent/agent.py managed "
-            "--state-dir /var/lib/spulti-agent\nRestart=on-failure\n"
+            "ExecStart=/usr/bin/python3 "
+            "/opt/spulti-agent/agent.py managed "
+            "--state-dir /var/lib/spulti-agent\n"
+            "Restart=on-failure\n"
         )
         + installer[end:]
     )
+
     return (
-        "#!/bin/bash\nset -euo pipefail\nset +x\numask 077\n"
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        "set +x\n"
+        "umask 077\n"
         + (user_script + "\n" if user_script else "")
         + env_bootstrap
         + f"export SPULTI_AGENT_DOWNLOAD_URL={shlex.quote(release)}\n"
