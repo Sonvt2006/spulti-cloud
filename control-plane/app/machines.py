@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from app.auth import CurrentUser
@@ -22,11 +22,12 @@ from app.services.instance_manager import (
     request_delete,
     retry_machine,
 )
+from app.services.placement import RegionSelection, ZoneSelection
 from app.services.recovery import setting, utc
 from app.tasks import sync_machine
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from kombu.exceptions import OperationalError
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -60,6 +61,9 @@ class MachineResponse(BaseModel):
     requested_disk_gib: Decimal | None
     requested_region: str | None
     requested_zone: str | None
+    requested_providers: list[str] = Field(default_factory=list)
+    requested_regions: list[RegionSelection] = Field(default_factory=list)
+    requested_zones: list[ZoneSelection] = Field(default_factory=list)
     optimization_mode: str
     created_at: datetime
     request_key: str | None = None
@@ -96,6 +100,15 @@ def machine_response(db: Session, machine: Machine) -> MachineResponse:
     result.job_id = binding.job_id if binding else None
     life = db.get(MachineLifecycle, machine.id)
     if life:
+        result.requested_providers = life.request_payload.get("providers", [])
+        result.requested_regions = [
+            RegionSelection.model_validate(item)
+            for item in life.request_payload.get("regions", [])
+        ]
+        result.requested_zones = [
+            ZoneSelection.model_validate(item)
+            for item in life.request_payload.get("zones", [])
+        ]
         result.request_key = life.request_key
         result.delete_requested = life.delete_requested
         result.needs_attention = life.blocked
@@ -230,7 +243,7 @@ def recovery_history(
     db: DbSession,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     try:
         owned_machine(db, user.id, machine_id)
     except ManagerError as exc:
@@ -250,7 +263,7 @@ def recovery_history(
             "last_error": run.last_error,
             "downtime_seconds": (
                 (utc(run.finished_at) - utc(run.started_at)).total_seconds()
-                if run.state == "SUCCEEDED"
+                if run.state == "SUCCEEDED" and run.finished_at is not None
                 else None
             ),
         }

@@ -7,7 +7,7 @@ from typing import Literal
 
 from app.models import MachineType, MachineTypeOffering, SpotPrice, SpotRisk
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 # Nhóm địa lý được hỗ trợ tường minh; region cụ thể vẫn dùng trực tiếp được.
@@ -16,6 +16,17 @@ REGION_GROUPS = {
 }
 WEIGHTS = {"SAVING": Decimal(1), "STABLE": Decimal(0), "BALANCED": Decimal("0.5")}
 CandidateKey = tuple[str, str, str, str]  # provider, region, zone, machine type
+
+
+class RegionSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["AWS", "GCP"]
+    region: str = Field(min_length=1, max_length=50)
+
+
+class ZoneSelection(RegionSelection):
+    zone: str = Field(min_length=1, max_length=50)
 
 
 class PlacementRequest(BaseModel):
@@ -29,6 +40,9 @@ class PlacementRequest(BaseModel):
     provider: Literal["AWS", "GCP"] | None = None
     region: str | None = Field(default=None, min_length=1, max_length=50)
     zone: str | None = Field(default=None, min_length=1, max_length=50)
+    providers: list[Literal["AWS", "GCP"]] = Field(default_factory=list)
+    regions: list[RegionSelection] = Field(default_factory=list)
+    zones: list[ZoneSelection] = Field(default_factory=list)
     optimization_mode: Literal["SAVING", "STABLE", "BALANCED"] = "BALANCED"
     limit: int = Field(default=20, ge=1, le=100)
 
@@ -103,6 +117,33 @@ def rank_candidates(
         query = query.where(MachineTypeOffering.zone == request.zone)
     if request.region and request.region not in REGION_GROUPS:
         query = query.where(MachineTypeOffering.region == request.region)
+    if request.providers:
+        query = query.where(MachineType.provider.in_(request.providers))
+    if request.regions:
+        query = query.where(
+            or_(
+                *(
+                    and_(
+                        MachineType.provider == item.provider,
+                        MachineTypeOffering.region == item.region,
+                    )
+                    for item in request.regions
+                )
+            )
+        )
+    if request.zones:
+        query = query.where(
+            or_(
+                *(
+                    and_(
+                        MachineType.provider == item.provider,
+                        MachineTypeOffering.region == item.region,
+                        MachineTypeOffering.zone == item.zone,
+                    )
+                    for item in request.zones
+                )
+            )
+        )
     offerings = list(db.execute(query))
     ids = {machine.id for machine, _ in offerings}
     if not ids:
@@ -119,13 +160,13 @@ def rank_candidates(
             (row.machine_type_id, row.region, row.zone, row.price_type), row
         )
     risks: dict[tuple[int, str, str | None], SpotRisk] = {}
-    for risk_row in db.scalars(
+    for row_risk in db.scalars(
         select(SpotRisk)
         .where(SpotRisk.machine_type_id.in_(ids), SpotRisk.observed_at <= now)
         .order_by(SpotRisk.observed_at.desc(), SpotRisk.id.desc())
     ):
         risks.setdefault(
-            (risk_row.machine_type_id, risk_row.region, risk_row.zone), risk_row
+            (row_risk.machine_type_id, row_risk.region, row_risk.zone), row_risk
         )
 
     candidates = []

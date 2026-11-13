@@ -236,7 +236,7 @@ function detailView(m, events) {
     ${m.status === 'DELETED' ? '<div class="inline-info">Hệ thống đã xác nhận máy không còn hoạt động trên cloud. Bản ghi được giữ lại để tra cứu lịch sử.</div>':''}
     ${stats(m.cost)}<p class="muted"><small>Chi phí tích lũy toàn bộ vòng đời, bao gồm các instance trước khi khôi phục.</small></p>
     <div class="detail-grid"><section class="panel"><div class="panel-heading"><h2>Instance hiện tại</h2>${compute?provider(compute.provider):''}</div><div class="panel-body">${compute ? `<dl class="kv"><dt>Loại máy</dt><dd>${esc(compute.machine_type)}</dd><dt>Tài nguyên</dt><dd>${compute.vcpu} vCPU · ${number(compute.ram_gib)} GiB RAM · ${compute.gpu_count} GPU</dd><dt>Vùng / zone</dt><dd>${esc(compute.region)} / ${esc(compute.zone)}</dd><dt>Spot / giờ</dt><dd>${money(compute.spot_price_per_hour,true)}</dd><dt>On-demand / giờ</dt><dd>${money(compute.on_demand_price_per_hour,true)}</dd><dt>Giá Spot ghi nhận</dt><dd>${date(compute.spot_price_recorded_at)}</dd><dt>Public IP</dt><dd>${esc(m.instance?.public_ip||'Chưa có')}</dd><dt>Đồng bộ gần nhất</dt><dd>${date(m.checked_at)}</dd></dl>${ssh?`<div class="code-line"><code>${esc(ssh)}</code><button class="icon-button" data-action="copy-ssh" aria-label="Sao chép lệnh SSH">${icon('copy')}</button></div>`:''}` : '<p class="muted">Chưa có instance đang hoạt động. Theo dõi trạng thái và thông báo của worker.</p>'}</div></section>
-    <section class="panel"><div class="panel-heading"><h2>Cấu hình yêu cầu</h2></div><div class="panel-body"><dl class="kv"><dt>CPU tối thiểu</dt><dd>${m.requested_vcpu} vCPU</dd><dt>RAM tối thiểu</dt><dd>${number(m.requested_ram_gib)} GiB</dd><dt>GPU tối thiểu</dt><dd>${m.requested_gpu_count}</dd><dt>Ổ đĩa</dt><dd>${number(m.requested_disk_gib)} GiB</dd><dt>Vùng / zone</dt><dd>${esc(m.requested_region||'Tự động')} / ${esc(m.requested_zone||'Tự động')}</dd><dt>Tối ưu</dt><dd>${esc(modes[m.optimization_mode])}</dd></dl><div class="inline-info">Hệ thống có thể chuyển sang cấu hình phù hợp khác khi khôi phục. Máy luôn sử dụng Spot.</div></div></section></div>
+    <section class="panel"><div class="panel-heading"><h2>Cấu hình yêu cầu</h2></div><div class="panel-body"><dl class="kv"><dt>CPU tối thiểu</dt><dd>${m.requested_vcpu} vCPU</dd><dt>RAM tối thiểu</dt><dd>${number(m.requested_ram_gib)} GiB</dd><dt>GPU tối thiểu</dt><dd>${m.requested_gpu_count}</dd><dt>Ổ đĩa</dt><dd>${number(m.requested_disk_gib)} GiB</dd><dt>Vùng / zone</dt><dd>${esc(locationSummary({providers: m.requested_providers, regions: m.requested_regions, zones: m.requested_zones, region: m.requested_region, zone: m.requested_zone}))}</dd><dt>Tối ưu</dt><dd>${esc(modes[m.optimization_mode])}</dd></dl><div class="inline-info">Hệ thống có thể chuyển sang cấu hình phù hợp khác khi khôi phục. Máy luôn sử dụng Spot.</div></div></section></div>
     <div class="page-heading section-gap"><div><h2>Chi phí trong kỳ</h2><p>Spot ${money(m.period_cost.spot_cost)} · On-demand ${money(m.period_cost.on_demand_cost)}</p></div>${period()}</div>${chart(m.daily)}${costNote(m.period_cost)}
     <section class="panel section-gap"><div class="panel-heading"><h2>Job & checkpoint</h2>${job?`<span class="badge">${esc(job.status)}</span>`:''}</div><div class="panel-body">${job?`<dl class="kv"><dt>Job ID</dt><dd><code>${esc(job.job_id)}</code></dd><dt>Tiến độ agent</dt><dd>${number(job.current_step)} / ${number(job.total_steps)} bước</dd><dt>Checkpoint</dt><dd>Bước ${number(job.checkpoint_step)}</dd><dt>Heartbeat gần nhất</dt><dd>${date(job.last_heartbeat_at)}</dd><dt>Nơi lưu checkpoint</dt><dd>${job.checkpoint?.storage==='s3'?`<code>${esc(`s3://${job.checkpoint.bucket}/${job.checkpoint.key}`)}</code>`:job.checkpoint?'Database (dữ liệu cũ)':'Chưa ghi nhận checkpoint'}</dd></dl><progress class="progress" value="${Number(job.current_step)}" max="${Number(job.total_steps)||1}" aria-label="Tiến độ công việc"></progress>`:'<p class="muted">Máy chưa gắn job. Có thể liên kết job đã tạo bằng CLI khi tạo máy mới.</p>'}</div></section>
     <section class="panel section-gap"><div class="panel-heading"><div><h2>Lịch sử instance</h2><p>Mỗi lần khôi phục có thể tạo một instance mới</p></div></div>${m.instances.length?`<div class="table-scroll"><table><thead><tr><th>Instance / loại máy</th><th>Vị trí</th><th>Bắt đầu</th><th>Kết thúc</th><th>Spot</th><th>On-demand</th></tr></thead><tbody>${m.instances.map(i=>`<tr><td>${esc(i.machine_type)}<small class="cell-note">${esc(i.provider_instance_id)}</small></td><td>${provider(i.provider)}<small class="cell-note">${esc(i.zone)}</small></td><td>${date(i.started_at)}</td><td>${i.ended_at?date(i.ended_at):'<span class="badge running">Đang hoạt động</span>'}</td><td>${money(i.cost.spot_cost)}</td><td>${money(i.cost.on_demand_cost)}</td></tr>`).join('')}</tbody></table></div>`:empty('Chưa có instance','Worker sẽ ghi nhận instance sau khi tạo thành công.')}</section>
@@ -259,21 +259,53 @@ function createView() {
   return heading('Tạo máy mới', 'Bắt đầu từ nhu cầu, tìm cấu hình phù hợp.') + `<ol class="steps">${['Nhu cầu tài nguyên','Chọn đề xuất','Xác nhận tạo máy'].map((label,i)=>`<li class="${step===i+1?'active':''}" ${step===i+1?'aria-current="step"':''}><span>${i+1}</span>${label}</li>`).join('')}</ol><div class="create-grid"><div>${step===1?requirementsView():step===2?recommendationsView():reviewView()}</div>${side}</div>`;
 }
 
-function locationOptions(provider, region = '', zone = '') {
-  const providerLocations = locations.filter(l => l.provider === provider);
-  const regions = [...new Set(providerLocations.map(l => l.region))];
-  const selectedRegion = regions.includes(region) ? region : '';
-  const zones = providerLocations.filter(l => selectedRegion && l.region === selectedRegion);
+function locationSummary(selection) {
+  return [
+    selection.providers?.join(', '),
+    selection.regions?.map(r => `${r.provider} · ${r.region}`).join(', ') || selection.region,
+    selection.zones?.map(z => `${z.provider} · ${z.zone}`).join(', ') || selection.zone
+  ].filter(Boolean).join(' / ') || 'Tự động';
+}
+
+function locationSelections(form) {
+  const values = new FormData(form);
   return {
-    regionDisabled: !provider,
-    zoneDisabled: !selectedRegion,
-    regions: `<option value="">${provider ? 'Tất cả vùng đã cấu hình' : 'Chọn nhà cung cấp trước'}</option>${regions.map(r => `<option value="${esc(r)}" ${selectedRegion === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}`,
-    zones: `<option value="">${selectedRegion ? 'Tự động trong khu vực đã chọn' : 'Chọn khu vực trước'}</option>${zones.map(l => `<option value="${esc(l.zone)}" ${zone === l.zone ? 'selected' : ''}>${esc(l.provider)} · ${esc(l.zone)}</option>`).join('')}`
+    providers: values.getAll('providers'),
+    regions: values.getAll('regions').map(value => JSON.parse(value)),
+    zones: values.getAll('zones').map(value => JSON.parse(value))
+  };
+}
+
+function locationCheckboxes(name, items, selected, placeholder) {
+  const keys = new Set(selected.map(item => JSON.stringify(item)));
+  return items.length ? items.map(({value, label}) => {
+    const key = JSON.stringify(value);
+    return `<label class="location-choice"><input type="checkbox" name="${name}" value="${esc(typeof value === 'string' ? value : key)}" ${keys.has(key) ? 'checked' : ''}><span>${esc(label)}</span></label>`;
+  }).join('') : `<p class="muted location-placeholder">${placeholder}</p>`;
+}
+
+function locationOptions(selection) {
+  const providers = selection.providers || [];
+  const available = locations.filter(l => providers.includes(l.provider));
+  const regionItems = [...new Map(available.map(l => {
+    const value = {provider: l.provider, region: l.region};
+    return [JSON.stringify(value), {value, label: `${l.provider} · ${l.region}`}];
+  })).values()];
+  const regions = (selection.regions || []).filter(r => available.some(l => l.provider === r.provider && l.region === r.region));
+  const zoneItems = [...new Map(available.filter(l => regions.some(r => r.provider === l.provider && r.region === l.region)).map(l => {
+    const value = {provider: l.provider, region: l.region, zone: l.zone};
+    return [JSON.stringify(value), {value, label: `${l.provider} · ${l.zone} (${l.region})`}];
+  })).values()];
+  const zones = (selection.zones || []).filter(z => zoneItems.some(({value}) => value.provider === z.provider && value.region === z.region && value.zone === z.zone));
+  return {
+    providers: locationCheckboxes('providers', ['AWS', 'GCP'].map(p => ({value: p, label: p})), providers, ''),
+    regions: locationCheckboxes('regions', regionItems, regions, providers.length ? 'Chưa có khu vực được cấu hình.' : 'Chọn nhà cung cấp trước.'),
+    zones: locationCheckboxes('zones', zoneItems, zones, regions.length ? 'Chưa có AZ được cấu hình.' : 'Chọn khu vực trước.')
   };
 }
 
 function requirementsView() {
-  const options = locationOptions(draft.provider, draft.region, draft.zone);
+  const options = locationOptions(draft);
   return `<form class="panel form-panel" id="requirements-form"><h2>Bạn cần bao nhiêu tài nguyên?</h2><p>CPU, RAM và GPU là mức tối thiểu cho mỗi máy.</p>${!locations.length?'<div class="inline-info">Chưa có cấu hình launch. Quản trị viên cần cấu hình vùng, image và mạng cho worker.</div>':''}<div class="form-grid">
     ${field('Tên máy','name',draft.name||'','required maxlength="100" placeholder="Ví dụ: training-worker-01" class="full"')}
     ${field('Ổ đĩa (GiB)','disk_size_gb',draft.disk_size_gb??30,'type="number" required min="1" max="65536" step="1"')}
@@ -281,9 +313,9 @@ function requirementsView() {
     ${field('RAM tối thiểu (GiB)','ram_gib',draft.ram_gib??4,'type="number" required min="0.25" step="0.25"')}
     ${field('Số GPU tối thiểu','gpu_count',draft.gpu_count??0,'type="number" required min="0" step="1"','Catalog hiện chưa hỗ trợ chọn model GPU.')}
     ${field('Số giờ dự kiến để so sánh','hours',draft.hours??24,'type="number" required min="1" max="8760" step="1"','Chỉ dùng để ước tính, không tự động dừng máy.')}
-    <label class="field"><span>Nhà cung cấp</span><select name="provider"><option value="">Tự động · AWS & GCP</option>${['AWS','GCP'].map(p=>`<option ${draft.provider===p?'selected':''}>${p}</option>`).join('')}</select></label>
-    <label class="field"><span>Khu vực</span><select name="region" ${options.regionDisabled?'disabled':''}>${options.regions}</select></label>
-    <label class="field full"><span>Availability zone</span><select name="zone" ${options.zoneDisabled?'disabled':''}>${options.zones}</select></label></div>
+    <fieldset class="location-group"><legend>Nhà cung cấp</legend><div class="location-options" id="provider-options">${options.providers}</div><small>Chọn ít nhất một nhà cung cấp.</small></fieldset>
+    <fieldset class="location-group"><legend>Khu vực</legend><div class="location-options" id="region-options">${options.regions}</div><small>Không tick khu vực: tìm trong mọi khu vực của nhà cung cấp đã chọn.</small></fieldset>
+    <fieldset class="location-group full"><legend>Availability zone</legend><div class="location-options" id="zone-options">${options.zones}</div><small>Không tick AZ: tìm trong mọi AZ thuộc phạm vi đã chọn.</small></fieldset></div>
     <div class="form-section"><h3>Mục tiêu tối ưu</h3><div class="mode-options">${Object.entries(modes).map(([key,label])=>`<label class="mode-option"><input type="radio" name="optimization_mode" value="${key}" ${(draft.optimization_mode||'BALANCED')===key?'checked':''}>${label}<small>${{SAVING:'Ưu tiên giá, lọc rủi ro cao',BALANCED:'Cân đối giá và rủi ro',STABLE:'Ưu tiên chỉ số rủi ro thấp'}[key]}</small></label>`).join('')}</div></div>
     <details class="form-section" ${draft.job_id||draft.startup_script?'open':''}><summary>Tùy chọn nâng cao · job và startup script</summary><div class="form-grid">${field('Job ID đã tạo bằng CLI (không bắt buộc)','job_id',draft.job_id||'','class="full" placeholder="UUID của job thuộc tài khoản này"','Startup script tùy chọn chạy trước khi cài managed agent.')}<label class="field full"><span>Startup script (không bắt buộc)</span><textarea name="startup_script" maxlength="8000" placeholder="#!/bin/bash">${esc(draft.startup_script||'')}</textarea><small>Script chạy trên máy mới; phải bắt đầu bằng shebang. Không nhập khóa truy cập cloud.</small></label></div></details><div id="form-error" role="alert"></div><div class="form-actions"><a href="#/machines">Hủy</a><button type="submit" class="button primary" ${!locations.length?'disabled':''}>Tìm máy phù hợp ${icon('arrow')}</button></div></form>`;
 }
@@ -294,7 +326,7 @@ function recommendationsView() {
 
 function reviewView() {
   const c = candidates[selected];
-  return `<section class="panel form-panel"><h2>Xác nhận cấu hình</h2><p>Máy ưu tiên sẽ được thử đầu tiên. Worker có thể dùng đề xuất khác khi thiếu tài nguyên Spot.</p><dl class="kv"><dt>Tên máy</dt><dd><b>${esc(draft.name)}</b></dd><dt>Cấu hình ưu tiên</dt><dd>${esc(c.machine_type)} · ${esc(c.provider)}</dd><dt>Tài nguyên</dt><dd>${c.vcpu} vCPU · ${number(c.ram_gib)} GiB RAM · ${c.gpu_count} GPU</dd><dt>Zone ưu tiên</dt><dd>${esc(c.zone)}</dd><dt>Ổ đĩa</dt><dd>${draft.disk_size_gb} GiB</dd><dt>Chi phí ${draft.hours} giờ</dt><dd>Spot <b>${money(Number(c.spot_price_per_hour)*draft.hours)}</b><br>On-demand ${c.on_demand_price_per_hour==null?'—':money(Number(c.on_demand_price_per_hour)*draft.hours)}</dd><dt>Job liên kết</dt><dd>${esc(draft.job_id||'Không có')}</dd><dt>SSH public keys</dt><dd>${sshKeys.length} key thuộc tài khoản sẽ được cài trên máy</dd></dl>
+  return `<section class="panel form-panel"><h2>Xác nhận cấu hình</h2><p>Máy ưu tiên sẽ được thử đầu tiên. Worker có thể dùng đề xuất khác khi thiếu tài nguyên Spot.</p><dl class="kv"><dt>Tên máy</dt><dd><b>${esc(draft.name)}</b></dd><dt>Cấu hình ưu tiên</dt><dd>${esc(c.machine_type)} · ${esc(c.provider)}</dd><dt>Tài nguyên</dt><dd>${c.vcpu} vCPU · ${number(c.ram_gib)} GiB RAM · ${c.gpu_count} GPU</dd><dt>Zone ưu tiên</dt><dd>${esc(c.zone)}</dd><dt>Phạm vi đã chọn</dt><dd>${esc(locationSummary(draft))}</dd><dt>Ổ đĩa</dt><dd>${draft.disk_size_gb} GiB</dd><dt>Chi phí ${draft.hours} giờ</dt><dd>Spot <b>${money(Number(c.spot_price_per_hour)*draft.hours)}</b><br>On-demand ${c.on_demand_price_per_hour==null?'—':money(Number(c.on_demand_price_per_hour)*draft.hours)}</dd><dt>Job liên kết</dt><dd>${esc(draft.job_id||'Không có')}</dd><dt>SSH public keys</dt><dd>${sshKeys.length} key thuộc tài khoản sẽ được cài trên máy</dd></dl>
     ${!sshKeys.length?`<div class="inline-info">Cần thêm SSH public key trước khi tạo máy. <a href="#/ssh-keys">Thêm public key</a>, sau đó quay lại trang này.</div>`:''}<div class="inline-info">Phạm vi khôi phục giữ nguyên nhu cầu bạn đã nhập; có thể chuyển zone hoặc cloud nếu không giới hạn. Chi phí trên chỉ là dự tính compute theo giá hiện tại.</div><div id="form-error" role="alert"></div><div class="form-actions"><button class="button" data-action="recommendations-back">Quay lại đề xuất</button><button class="button primary" data-action="create" ${!sshKeys.length?'disabled':''}>${icon('plus')} Tạo máy Spot</button></div>${costNote()}</section>`;
 }
 
@@ -385,6 +417,8 @@ async function selectJobFile(file) {
 
 function readRequirements(form) {
   const data = Object.fromEntries(new FormData(form));
+  Object.assign(data, locationSelections(form));
+  if (!data.providers.length) throw new Error('Vui lòng chọn ít nhất một nhà cung cấp.');
   for (const key of ['vcpu', 'gpu_count', 'disk_size_gb', 'hours']) data[key] = Number(data[key]);
   for (const key of ['provider', 'region', 'zone', 'job_id']) data[key] = data[key] || null;
   data.name = data.name.trim();
@@ -398,7 +432,7 @@ function readRequirements(form) {
 }
 
 function placementBody(data) {
-  return Object.fromEntries(['vcpu', 'ram_gib', 'gpu_count', 'provider', 'region', 'zone', 'optimization_mode', 'limit'].map(key => [key, data[key]]));
+  return Object.fromEntries(['vcpu', 'ram_gib', 'gpu_count', 'provider', 'region', 'zone', 'providers', 'regions', 'zones', 'optimization_mode', 'limit'].map(key => [key, data[key]]));
 }
 
 function uniqueId() {
@@ -676,14 +710,11 @@ app.addEventListener('change', event => {
     selectJobFile(event.target.files[0]);
     event.target.value = '';
   }
-  if (['provider', 'region'].includes(event.target.name) && event.target.form?.id === 'requirements-form') {
+  if (['providers', 'regions'].includes(event.target.name) && event.target.form?.id === 'requirements-form') {
     const form = event.target.form;
-    const options = locationOptions(form.elements.provider.value,
-      event.target.name === 'provider' ? '' : form.elements.region.value);
-    form.elements.region.innerHTML = options.regions;
-    form.elements.region.disabled = options.regionDisabled;
-    form.elements.zone.innerHTML = options.zones;
-    form.elements.zone.disabled = options.zoneDisabled;
+    const options = locationOptions(locationSelections(form));
+    if (event.target.name === 'providers') form.querySelector('#region-options').innerHTML = options.regions;
+    form.querySelector('#zone-options').innerHTML = options.zones;
   }
 });
 window.addEventListener('hashchange', () => render());

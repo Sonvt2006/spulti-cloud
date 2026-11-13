@@ -25,6 +25,19 @@ và GCP `asia-southeast1`; có thể dùng tên region cụ thể. Bỏ region �
 offerings. Chỉ dùng zone đã có trong catalog. Catalog chưa có loại GPU, nên
 `gpu_type` khác null bị từ chối. Dung lượng disk/image do bước tạo máy xử lý.
 
+Chọn nhiều vị trí bằng `providers` (danh sách `AWS`/`GCP`), `regions` (danh sách
+`{"provider":"AWS","region":"ap-southeast-1"}`) và `zones` (danh sách
+`{"provider":"AWS","region":"ap-southeast-1","zone":"ap-southeast-1a"}`).
+Mỗi danh sách cho phép nhiều mục; các nhóm lọc kết hợp với nhau. Danh sách trống
+không giới hạn nhóm đó. Các trường đơn cũ vẫn được hỗ trợ và kết hợp với bộ lọc
+mới nếu cùng gửi. Bộ lọc áp dụng trước khi xếp hạng và giới hạn số đề xuất,
+đồng thời được lưu khi tạo máy để giữ nguyên phạm vi khi khôi phục.
+
+Dashboard dùng checkbox độc lập, yêu cầu chọn ít nhất một nhà cung cấp; chỉ hiện
+region thuộc nhà cung cấp đã tick và AZ thuộc region đã tick. Bỏ tick mục cha
+sẽ bỏ các lựa chọn con tương ứng. Không tick region/AZ nghĩa là không giới hạn
+thêm ở cấp đó.
+
 ## Quy tắc xếp hạng
 
 1. Lọc cấu hình, nhà cung cấp và vị trí; loại ứng viên trong danh sách loại trừ

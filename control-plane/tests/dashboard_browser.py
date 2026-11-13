@@ -199,46 +199,67 @@ def run_browser(base_url, factory, output):
             page.get_by_role("heading", name="Bạn cần bao nhiêu tài nguyên?")
         ).to_be_visible()
         page.get_by_label("Tên máy", exact=True).fill("browser-created")
-        provider = page.locator('#requirements-form select[name="provider"]')
-        region = page.locator('#requirements-form select[name="region"]')
-        zone = page.locator('#requirements-form select[name="zone"]')
-        expect(region).to_be_disabled()
-        expect(zone).to_be_disabled()
-        for cloud, cloud_region, cloud_zone in (
-            ("AWS", "ap-southeast-1", "ap-southeast-1a"),
-            ("GCP", "asia-southeast1", "asia-southeast1-b"),
-        ):
-            provider.select_option(cloud)
-            expect(region).to_be_enabled()
-            expect(region).to_have_value("")
-            expect(zone).to_be_disabled()
-            expect(zone).to_have_value("")
-            assert region.locator("option").evaluate_all(
-                "options => options.map(option => option.value)"
-            ) == ["", cloud_region]
-            region.select_option(cloud_region)
-            expect(zone).to_be_enabled()
-            assert zone.locator("option").evaluate_all(
-                "options => options.map(option => option.value)"
-            ) == ["", cloud_zone]
-            zone.select_option(cloud_zone)
-            region.select_option("")
-            expect(zone).to_be_disabled()
-            expect(zone).to_have_value("")
-            region.select_option(cloud_region)
-            zone.select_option(cloud_zone)
+        providers = page.locator("#provider-options input")
+        regions = page.locator("#region-options input")
+        zones = page.locator("#zone-options input")
+        expect(providers).to_have_count(2)
+        expect(regions).to_have_count(0)
+        expect(zones).to_have_count(0)
+        page.get_by_role("button", name="Tìm máy phù hợp").click()
+        expect(page.locator("#form-error")).to_contain_text(
+            "chọn ít nhất một nhà cung cấp"
+        )
+        aws = page.get_by_role("checkbox", name="AWS", exact=True)
+        gcp = page.get_by_role("checkbox", name="GCP", exact=True)
+        aws_region = page.get_by_role(
+            "checkbox", name="AWS · ap-southeast-1", exact=True
+        )
+        gcp_region = page.get_by_role(
+            "checkbox", name="GCP · asia-southeast1", exact=True
+        )
+        aws_zone = page.get_by_role(
+            "checkbox", name="AWS · ap-southeast-1a (ap-southeast-1)", exact=True
+        )
+        gcp_zone = page.get_by_role(
+            "checkbox", name="GCP · asia-southeast1-b (asia-southeast1)", exact=True
+        )
+        aws.check()
+        expect(regions).to_have_count(1)
+        expect(gcp_region).to_have_count(0)
+        aws_region.check()
+        expect(zones).to_have_count(1)
+        aws_zone.check()
+        gcp.check()
+        expect(regions).to_have_count(2)
+        expect(aws_region).to_be_checked()
+        expect(aws_zone).to_be_checked()
+        gcp_region.check()
+        gcp_zone.check()
+        expect(zones).to_have_count(2)
+        aws_region.uncheck()
+        expect(aws_zone).to_have_count(0)
+        expect(gcp_zone).to_be_checked()
+        aws_region.check()
+        expect(aws_zone).not_to_be_checked()
+        aws_zone.check()
+        aws.uncheck()
+        expect(aws_region).to_have_count(0)
+        expect(aws_zone).to_have_count(0)
+        expect(gcp_region).to_be_checked()
+        expect(gcp_zone).to_be_checked()
         page.get_by_role("button", name="Tìm máy phù hợp").click()
         expect(page.locator(".candidate")).to_have_count(1)
         page.get_by_role("button", name="Sửa nhu cầu").click()
-        expect(provider).to_have_value("GCP")
-        expect(region).to_have_value("asia-southeast1")
-        expect(zone).to_have_value("asia-southeast1-b")
-        expect(zone).to_be_enabled()
-        provider.select_option("")
-        expect(region).to_be_disabled()
-        expect(region).to_have_value("")
-        expect(zone).to_be_disabled()
-        expect(zone).to_have_value("")
+        expect(gcp).to_be_checked()
+        expect(gcp_region).to_be_checked()
+        expect(gcp_zone).to_be_checked()
+        aws.check()
+        aws_region.check()
+        aws_zone.check()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(
+            path=str(output / "location-checkboxes-mobile.png"), full_page=True
+        )
         page.get_by_role("button", name="Tìm máy phù hợp").click()
         expect(page.locator(".candidate")).to_have_count(2)
         page.locator(".candidate").filter(has_text="e2-standard-4").click()
@@ -419,6 +440,7 @@ def run_browser(base_url, factory, output):
         expect(page.get_by_role("button", name="Upload & Tạo job")).to_be_disabled()
         page.get_by_role("link", name="Tạo máy mới", exact=False).first.click()
         page.get_by_label("Tên máy", exact=True).fill("new-account-machine")
+        page.get_by_role("checkbox", name="AWS", exact=True).check()
         page.get_by_role("button", name="Tìm máy phù hợp").click()
         page.get_by_role("button", name="Tiếp tục", exact=True).click()
         expect(page.get_by_role("button", name="Tạo máy Spot")).to_be_disabled()

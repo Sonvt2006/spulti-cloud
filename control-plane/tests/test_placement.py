@@ -174,6 +174,55 @@ class PlacementTests(unittest.TestCase):
             {c.spot_price_per_hour for c in self.rank()}, {Decimal(2), Decimal(3)}
         )
 
+    def test_multiple_locations_filter_before_ranking_and_limit(self):
+        self.add_candidate("aws-a", price="2")
+        self.add_candidate("aws-b", price="3", zone="ap-southeast-1b")
+        self.add_candidate(
+            "other-region", price="0.01", region="us-east-1", zone="us-east-1a"
+        )
+        self.add_candidate(
+            "gcp", provider="GCP", region="asia-southeast1", zone="asia-southeast1-b"
+        )
+        regions = [
+            {"provider": "AWS", "region": "ap-southeast-1"},
+            {"provider": "GCP", "region": "asia-southeast1"},
+        ]
+        zones = [
+            {**regions[0], "zone": "ap-southeast-1a"},
+            {**regions[0], "zone": "ap-southeast-1b"},
+            {**regions[1], "zone": "asia-southeast1-b"},
+        ]
+        self.assertEqual(
+            {
+                c.machine_type
+                for c in self.rank(
+                    providers=["AWS", "GCP"], regions=regions, zones=zones
+                )
+            },
+            {"aws-a", "aws-b", "gcp"},
+        )
+        self.assertEqual(
+            {
+                c.machine_type
+                for c in self.rank(providers=["AWS"], regions=regions, zones=zones)
+            },
+            {"aws-a", "aws-b"},
+        )
+        self.assertEqual(
+            [
+                c.machine_type
+                for c in self.rank(regions=regions[:1], zones=zones[:1], limit=1)
+            ],
+            ["aws-a"],
+        )
+        # Provider/region/zone belong to the same selection, never a cross product.
+        self.assertEqual(
+            self.rank(regions=[{"provider": "GCP", "region": "ap-southeast-1"}]), []
+        )
+        self.assertEqual(
+            self.rank(zones=[{**regions[1], "zone": "ap-southeast-1a"}]), []
+        )
+
     def test_no_price_and_wrong_zone_are_excluded(self):
         machine = self.add_candidate("missing", None)
         self.price(machine, "1", zone="ap-southeast-1b")
