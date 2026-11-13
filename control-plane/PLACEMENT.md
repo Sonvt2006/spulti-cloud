@@ -48,8 +48,8 @@ thêm ở cấp đó.
    Giá on-demand bằng 0 cũng trả tiết kiệm null. Giá spot bằng 0 hợp lệ.
 3. Lấy rủi ro mới nhất theo cùng quy tắc zone/region. Dùng cận trên của bucket;
    bucket mở như AWS `>20%` dùng điểm rủi ro 1. Thiếu rủi ro dùng mặc định 0.5.
-4. Chế độ `SAVING` loại rủi ro lớn hơn 0.2 trước khi chuẩn hóa. Các ngưỡng này
-   là chính sách mặc định, caller nội bộ có thể thay đổi.
+4. Chế độ `SAVING` không loại ứng viên theo rủi ro, kể cả khi thiếu dữ liệu rủi ro;
+   ưu tiên xếp hạng theo giá Spot thấp nhất.
 5. Chuẩn hóa min-max giá và rủi ro trên toàn bộ ứng viên còn lại, rồi tính
    `score = w * normalized_price + (1-w) * normalized_risk`.
    `w=1` cho `SAVING`, `0` cho `STABLE`, `0.5` cho `BALANCED`.

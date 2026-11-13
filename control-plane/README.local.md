@@ -617,8 +617,8 @@ thu thập giá, khoảng lịch sử cũ có thể chưa đủ giá để tính
 ### 8.5. Tạo, theo dõi và xóa máy bằng dashboard
 
 1. Chọn **Tạo máy mới**, nhập tên, vCPU/RAM tối thiểu, GPU nếu cần, disk, provider,
-   region/zone và chế độ tối ưu. Khi thử lần đầu có thể chọn **Cân bằng**; chế độ
-   Tiết kiệm loại ứng viên có chỉ số rủi ro cao hoặc thiếu dữ liệu theo policy.
+   region/zone và chế độ tối ưu. Chế độ **Tiết kiệm** ưu tiên giá Spot thấp nhất,
+   không loại ứng viên theo chỉ số rủi ro hoặc khi thiếu dữ liệu rủi ro.
 2. Chọn **Tìm máy phù hợp**. Kết quả phải đồng thời thỏa nhu cầu, có offering,
    có giá Spot và nằm trong launch allowlist. Chọn cấu hình, xem so sánh giá.
 3. Bấm **Tạo máy Spot** để gửi yêu cầu tạo VM thật. Cả ba chế độ đều tạo Spot;

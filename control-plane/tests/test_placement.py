@@ -255,9 +255,16 @@ class PlacementTests(unittest.TestCase):
         self.assertEqual(result.risk, Decimal("0.1"))
         self.assertIsNone(result.savings_percent)
 
-    def test_saving_rejects_unknown_high_and_open_bucket_risk(self):
-        self.add_candidate("unknown", risk=None)
-        self.add_candidate("high", risk="0.8")
+    def test_saving_includes_unknown_high_and_open_bucket_risk(self):
+        self.add_candidate(
+            "unknown",
+            "0.5",
+            risk=None,
+            provider="GCP",
+            region="asia-southeast1",
+            zone="asia-southeast1-b",
+        )
+        self.add_candidate("high", "0.8", risk="0.8")
         machine = self.add_candidate("open", risk=None)
         self.db.add(
             SpotRisk(
@@ -271,7 +278,10 @@ class PlacementTests(unittest.TestCase):
                 observed_at=NOW,
             )
         )
-        self.assertEqual(self.rank(optimization_mode="SAVING"), [])
+        self.assertEqual(
+            [c.machine_type for c in self.rank(optimization_mode="SAVING")],
+            ["unknown", "high", "open"],
+        )
         results = {c.machine_type: c for c in self.rank()}
         self.assertEqual(results["unknown"].risk, Decimal("0.5"))
         self.assertEqual(results["unknown"].risk_source, "DEFAULT")
