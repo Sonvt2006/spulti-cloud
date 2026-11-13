@@ -949,6 +949,62 @@ tr:last-child td {
   line-height: 1.5
 }
 
+.field select:disabled {
+  background: #f4f6f3;
+  color: #7c8d7e;
+  cursor: not-allowed
+}
+
+.location-group {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #dbe3da;
+  border-radius: 7px
+}
+
+.location-group legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 500
+}
+
+.location-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px
+}
+
+.location-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  overflow-wrap: anywhere
+}
+
+.location-choice input {
+  flex-shrink: 0;
+  margin-top: 3px;
+  accent-color: #176b52
+}
+
+.location-group small {
+  display: block;
+  margin-top: 8px;
+  color: #7c8d7e;
+  font-size: 10px
+}
+
+.location-placeholder {
+  margin: 0;
+  font-size: 12px
+}
+
 .field textarea {
   resize: vertical;
   min-height: 110px;

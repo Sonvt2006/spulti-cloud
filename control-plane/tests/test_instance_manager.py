@@ -313,6 +313,38 @@ class InstanceManagerTests(unittest.TestCase):
         self.assertEqual(self.submit(key=key, name="different").status_code, 409)
         self.assertEqual(self.db.scalar(select(func.count()).select_from(Machine)), 1)
 
+    def test_multiple_location_selection_is_saved_and_limits_attempts(self):
+        regions = [
+            {"provider": "AWS", "region": "ap-southeast-1"},
+            {"provider": "GCP", "region": "asia-southeast1"},
+        ]
+        zones = [
+            {**regions[0], "zone": "ap-southeast-1a"},
+            {**regions[1], "zone": "asia-southeast1-b"},
+        ]
+        key = str(uuid4())
+        selection = {"providers": ["AWS", "GCP"], "regions": regions, "zones": zones}
+        machine_id = self.create(key=key, **selection)
+        life = self.db.get(MachineLifecycle, machine_id)
+        for field, value in selection.items():
+            self.assertEqual(life.request_payload[field], value)
+        view = self.view(machine_id)
+        self.assertEqual(view["requested_regions"], regions)
+        self.assertEqual(view["requested_zones"], zones)
+        self.assertEqual(self.submit(key=key, **selection).json()["id"], machine_id)
+        self.assertEqual(self.submit(key=key, providers=["AWS"]).status_code, 409)
+        restricted_id = self.create(providers=["GCP"], regions=regions, zones=zones)
+        attempts = list(
+            self.db.scalars(
+                select(InstanceAttempt).where(
+                    InstanceAttempt.machine_id == restricted_id
+                )
+            )
+        )
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0].provider, "GCP")
+        self.assertEqual(attempts[0].zone, "asia-southeast1-b")
+
     def test_quota_counts_pending_and_is_released_only_after_deleted(self):
         with patch.dict(os.environ, {"SPULTI_MAX_MACHINES_PER_USER": "1"}):
             machine_id = self.create()
