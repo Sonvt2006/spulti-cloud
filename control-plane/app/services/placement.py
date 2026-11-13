@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 REGION_GROUPS = {
     "singapore": {"AWS": "ap-southeast-1", "GCP": "asia-southeast1"},
 }
-WEIGHTS = {"SAVING": Decimal(1), "STABLE": Decimal(0), "BALANCED": Decimal("0.5")}
+WEIGHTS = {"SAVING": Decimal(1), "STABLE": Decimal(0)}
 CandidateKey = tuple[str, str, str, str]  # provider, region, zone, machine type
 
 
@@ -43,7 +43,7 @@ class PlacementRequest(BaseModel):
     providers: list[Literal["AWS", "GCP"]] = Field(default_factory=list)
     regions: list[RegionSelection] = Field(default_factory=list)
     zones: list[ZoneSelection] = Field(default_factory=list)
-    optimization_mode: Literal["SAVING", "STABLE", "BALANCED"] = "BALANCED"
+    optimization_mode: Literal["SAVING", "STABLE"] = "SAVING"
     limit: int = Field(default=20, ge=1, le=100)
 
 

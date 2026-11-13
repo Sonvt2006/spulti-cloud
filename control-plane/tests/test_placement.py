@@ -123,19 +123,22 @@ class PlacementTests(unittest.TestCase):
             self.db, PlacementRequest(vcpu=2, ram_gib=4, **kwargs), now=NOW
         )
 
-    def test_three_modes(self):
+    def test_two_modes(self):
         self.add_candidate("cheap", "1", "0.19")
-        self.add_candidate("balanced", "2", "0.03")
         self.add_candidate("stable", "5", "0.01")
         for mode, winner in [
             ("SAVING", "cheap"),
-            ("BALANCED", "balanced"),
             ("STABLE", "stable"),
         ]:
             with self.subTest(mode=mode):
                 results = self.rank(optimization_mode=mode)
                 self.assertEqual(results[0].machine_type, winner)
                 self.assertTrue(all(0 <= c.score <= 1 for c in results))
+
+    def test_default_mode_is_saving(self):
+        self.assertEqual(
+            PlacementRequest(vcpu=2, ram_gib=4).optimization_mode, "SAVING"
+        )
 
     def test_resource_and_location_filters(self):
         self.add_candidate("small", vcpu=1)
@@ -341,6 +344,7 @@ class PlacementTests(unittest.TestCase):
             {"gpu_count": -1},
             {"gpu_type": "A100"},
             {"optimization_mode": "invalid"},
+            {"optimization_mode": "BALANCED"},
             {"limit": 0},
             {"region": ""},
             {"unexpected": True},

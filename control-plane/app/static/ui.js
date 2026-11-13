@@ -21,7 +21,6 @@ export const date = value => value ? new Intl.DateTimeFormat('vi-VN', {
 }).format(new Date(/Z$|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`)) : '—';
 export const modes = {
   SAVING: 'Tiết kiệm',
-  BALANCED: 'Cân bằng',
   STABLE: 'Ưu tiên ổn định'
 };
 export const states = {

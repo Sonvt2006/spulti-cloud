@@ -174,7 +174,7 @@ class Machine(Base):
     __tablename__ = "machines"
     __table_args__ = (
         CheckConstraint(
-            "optimization_mode IN ('SAVING', 'STABLE', 'BALANCED')",
+            "optimization_mode IN ('SAVING', 'STABLE')",
             name="machines_optimization_mode_check",
         ),
         CheckConstraint(
