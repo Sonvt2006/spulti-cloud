@@ -11,7 +11,7 @@ Không gọi cloud API, tạo VM hay giữ chỗ quota. Không cần thay đổi
 curl -X POST http://localhost/api/placement/recommendations \
   -H "Authorization: Bearer <ACCESS_TOKEN>" \
   -H "Content-Type: application/json" \
-  -d '{"vcpu":4,"ram_gib":16,"gpu_count":0,"region":"singapore","optimization_mode":"BALANCED","limit":10}'
+  -d '{"vcpu":4,"ram_gib":16,"gpu_count":0,"region":"singapore","optimization_mode":"SAVING","limit":10}'
 ```
 
 Trả danh sách ứng viên đã xếp hạng, điểm thấp nhất đứng đầu; không có ứng viên
@@ -48,11 +48,11 @@ thêm ở cấp đó.
    Giá on-demand bằng 0 cũng trả tiết kiệm null. Giá spot bằng 0 hợp lệ.
 3. Lấy rủi ro mới nhất theo cùng quy tắc zone/region. Dùng cận trên của bucket;
    bucket mở như AWS `>20%` dùng điểm rủi ro 1. Thiếu rủi ro dùng mặc định 0.5.
-4. Chế độ `SAVING` loại rủi ro lớn hơn 0.2 trước khi chuẩn hóa. Các ngưỡng này
-   là chính sách mặc định, caller nội bộ có thể thay đổi.
+4. Chế độ `SAVING` không loại ứng viên theo rủi ro, kể cả khi thiếu dữ liệu rủi ro;
+   ưu tiên xếp hạng theo giá Spot thấp nhất.
 5. Chuẩn hóa min-max giá và rủi ro trên toàn bộ ứng viên còn lại, rồi tính
    `score = w * normalized_price + (1-w) * normalized_risk`.
-   `w=1` cho `SAVING`, `0` cho `STABLE`, `0.5` cho `BALANCED`.
+   `w=1` cho `SAVING`, `0` cho `STABLE`.
    Nếu mọi giá trị bằng nhau, giá trị chuẩn hóa bằng 0.
 6. Phá hòa theo rủi ro, giá, provider/region/zone/tên máy; chỉ áp dụng limit sau
    khi xếp hạng để kết quả ổn định.
@@ -96,3 +96,17 @@ python -m unittest discover -s tests -v
 ```
 
 Tests dùng SQLite tạm và không tạo tài nguyên cloud.
+
+Chế độ mặc định là `SAVING`. API và CLI chỉ nhận `SAVING` hoặc `STABLE`.
+
+Với database PostgreSQL đã tồn tại, dừng API/worker trước khi nâng cấp và chạy
+migration một lần từ thư mục `control-plane`, với `DATABASE_URL` của database cần
+nâng cấp:
+
+```bash
+python -m app.scripts.remove_balanced_mode
+```
+
+Migration chuyển chế độ đã bỏ trong máy và request đã lưu sang `SAVING`, rồi
+cập nhật ràng buộc database để chỉ nhận hai chế độ còn lại. Sau đó khởi động lại
+API/worker bằng phiên bản mới. Database mới dùng ràng buộc này ngay từ đầu.

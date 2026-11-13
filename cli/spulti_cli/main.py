@@ -368,8 +368,8 @@ def _add_resource_commands(commands: Any) -> None:
         parser.add_argument(
             "--optimization-mode",
             type=str.upper,
-            choices=("SAVING", "STABLE", "BALANCED"),
-            default="BALANCED",
+            choices=("SAVING", "STABLE"),
+            default="SAVING",
         )
         parser.add_argument("--limit", type=_limit, default=20)
 

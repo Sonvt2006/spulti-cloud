@@ -123,19 +123,22 @@ class PlacementTests(unittest.TestCase):
             self.db, PlacementRequest(vcpu=2, ram_gib=4, **kwargs), now=NOW
         )
 
-    def test_three_modes(self):
+    def test_two_modes(self):
         self.add_candidate("cheap", "1", "0.19")
-        self.add_candidate("balanced", "2", "0.03")
         self.add_candidate("stable", "5", "0.01")
         for mode, winner in [
             ("SAVING", "cheap"),
-            ("BALANCED", "balanced"),
             ("STABLE", "stable"),
         ]:
             with self.subTest(mode=mode):
                 results = self.rank(optimization_mode=mode)
                 self.assertEqual(results[0].machine_type, winner)
                 self.assertTrue(all(0 <= c.score <= 1 for c in results))
+
+    def test_default_mode_is_saving(self):
+        self.assertEqual(
+            PlacementRequest(vcpu=2, ram_gib=4).optimization_mode, "SAVING"
+        )
 
     def test_resource_and_location_filters(self):
         self.add_candidate("small", vcpu=1)
@@ -255,9 +258,16 @@ class PlacementTests(unittest.TestCase):
         self.assertEqual(result.risk, Decimal("0.1"))
         self.assertIsNone(result.savings_percent)
 
-    def test_saving_rejects_unknown_high_and_open_bucket_risk(self):
-        self.add_candidate("unknown", risk=None)
-        self.add_candidate("high", risk="0.8")
+    def test_saving_includes_unknown_high_and_open_bucket_risk(self):
+        self.add_candidate(
+            "unknown",
+            "0.5",
+            risk=None,
+            provider="GCP",
+            region="asia-southeast1",
+            zone="asia-southeast1-b",
+        )
+        self.add_candidate("high", "0.8", risk="0.8")
         machine = self.add_candidate("open", risk=None)
         self.db.add(
             SpotRisk(
@@ -271,7 +281,10 @@ class PlacementTests(unittest.TestCase):
                 observed_at=NOW,
             )
         )
-        self.assertEqual(self.rank(optimization_mode="SAVING"), [])
+        self.assertEqual(
+            [c.machine_type for c in self.rank(optimization_mode="SAVING")],
+            ["unknown", "high", "open"],
+        )
         results = {c.machine_type: c for c in self.rank()}
         self.assertEqual(results["unknown"].risk, Decimal("0.5"))
         self.assertEqual(results["unknown"].risk_source, "DEFAULT")
@@ -331,6 +344,7 @@ class PlacementTests(unittest.TestCase):
             {"gpu_count": -1},
             {"gpu_type": "A100"},
             {"optimization_mode": "invalid"},
+            {"optimization_mode": "BALANCED"},
             {"limit": 0},
             {"region": ""},
             {"unexpected": True},

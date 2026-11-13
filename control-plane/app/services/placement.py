@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 REGION_GROUPS = {
     "singapore": {"AWS": "ap-southeast-1", "GCP": "asia-southeast1"},
 }
-WEIGHTS = {"SAVING": Decimal(1), "STABLE": Decimal(0), "BALANCED": Decimal("0.5")}
+WEIGHTS = {"SAVING": Decimal(1), "STABLE": Decimal(0)}
 CandidateKey = tuple[str, str, str, str]  # provider, region, zone, machine type
 
 
@@ -43,7 +43,7 @@ class PlacementRequest(BaseModel):
     providers: list[Literal["AWS", "GCP"]] = Field(default_factory=list)
     regions: list[RegionSelection] = Field(default_factory=list)
     zones: list[ZoneSelection] = Field(default_factory=list)
-    optimization_mode: Literal["SAVING", "STABLE", "BALANCED"] = "BALANCED"
+    optimization_mode: Literal["SAVING", "STABLE"] = "SAVING"
     limit: int = Field(default=20, ge=1, le=100)
 
 
@@ -87,7 +87,6 @@ def rank_candidates(
     exclusions: Mapping[CandidateKey, datetime] | None = None,
     quota_available: Callable[[PlacementCandidate], bool] | None = None,
     default_risk: Decimal = Decimal("0.5"),
-    saving_max_risk: Decimal = Decimal("0.2"),
     allowed_keys: set[CandidateKey] | None = None,
 ) -> list[PlacementCandidate]:
     """Điểm nhỏ hơn tốt hơn; giữ thứ tự để worker thử ứng viên tiếp theo.
@@ -96,9 +95,8 @@ def rank_candidates(
     Quota callback do caller cung cấp; thiếu callback nghĩa là chưa xác minh quota.
     Risk là chỉ số xếp hạng, không phải xác suất có cùng kỳ đo giữa AWS/GCP.
     """
-    for value in (default_risk, saving_max_risk):
-        if not value.is_finite() or not Decimal(0) <= value <= Decimal(1):
-            raise ValueError("Risk policy must be finite and between 0 and 1")
+    if not default_risk.is_finite() or not Decimal(0) <= default_risk <= Decimal(1):
+        raise ValueError("Risk policy must be finite and between 0 and 1")
     now = _utc(now or datetime.now(UTC))
     query = (
         select(MachineType, MachineTypeOffering)
@@ -199,12 +197,10 @@ def rank_candidates(
             if risk_row.rate_max is not None:
                 risk_value = risk_row.rate_max
             elif risk_row.rate_min is not None:
-                # Bucket mở (>20%) không được coi là an toàn ở mức 20%.
+                # Bucket mở không có cận trên dùng điểm rủi ro cao nhất.
                 risk_value = Decimal(1)
             source, metric = risk_row.source, risk_row.metric
             observed = risk_row.observed_at
-        if request.optimization_mode == "SAVING" and risk_value > saving_max_risk:
-            continue
         demand_price = demand.price_per_hour if demand is not None else None
         candidate = PlacementCandidate(
             machine_type_id=machine.id,

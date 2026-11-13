@@ -95,7 +95,7 @@ Tất cả các bảng được định nghĩa trong `app/models.py`. Muốn th�
 | `ssh_keys` | `user_id` → `users.id`, `name`, `public_key`, `fingerprint`; mỗi user không trùng `name` hay `fingerprint` |
 | `api_keys` | `user_id` → `users.id`, `name`, `key_prefix`, `key_hash` (SHA-256, unique), `last_used_at`, `expires_at`, `revoked_at` |
 | `machine_types` | Catalog loại máy AWS/GCP: `provider`, `name`, `vcpu`, `ram_gib`, `gpu_count` |
-| `machines` | Máy Spulti của người dùng: `user_id` → `users.id`, cấu hình yêu cầu, `optimization_mode` (`SAVING`/`STABLE`/`BALANCED`), `status` (`PENDING`/`PROVISIONING`/`RUNNING`/`RECOVERING`/`DELETED`) |
+| `machines` | Máy Spulti của người dùng: `user_id` → `users.id`, cấu hình yêu cầu, `optimization_mode` (`SAVING`/`STABLE`), `status` (`PENDING`/`PROVISIONING`/`RUNNING`/`RECOVERING`/`DELETED`) |
 | `instances` | Máy thật trên cloud gắn với một máy Spulti: `machine_id`, `machine_type_id`, `provider_instance_id`, `region`, `zone`, `started_at`, `ended_at` |
 | `spot_prices` | Lịch sử giá: `machine_type_id`, `region`, `zone`, `price_type` (`SPOT`/`ON_DEMAND`), `price_per_hour`, `recorded_at` |
 | `events` | Sự kiện thu hồi: `machine_id`, `instance_id`, `event_type` (`RECLAIM`/`INTERRUPT`), `details` (JSON) |
@@ -417,8 +417,8 @@ docker compose exec worker python -m app.scripts.try_gcp_adapter delete
 
 ## Placement Engine: đề xuất máy
 
-Đã có `POST /api/placement/recommendations` để lọc và xếp hạng máy theo ba chế độ
-`SAVING`, `STABLE`, `BALANCED`. Xem [cách gọi API, quy tắc xếp hạng và tích hợp
+Đã có `POST /api/placement/recommendations` để lọc và xếp hạng máy theo hai chế độ
+`SAVING`, `STABLE`. Xem [cách gọi API, quy tắc xếp hạng và tích hợp
 Instance Manager](PLACEMENT.md). API chỉ đề xuất; chưa tạo máy hoặc xác minh quota cloud.
 
 ## 7. Các lệnh vận hành và bảo trì thường dùng

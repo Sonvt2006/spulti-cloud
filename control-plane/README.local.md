@@ -617,11 +617,11 @@ thu thập giá, khoảng lịch sử cũ có thể chưa đủ giá để tính
 ### 8.5. Tạo, theo dõi và xóa máy bằng dashboard
 
 1. Chọn **Tạo máy mới**, nhập tên, vCPU/RAM tối thiểu, GPU nếu cần, disk, provider,
-   region/zone và chế độ tối ưu. Khi thử lần đầu có thể chọn **Cân bằng**; chế độ
-   Tiết kiệm loại ứng viên có chỉ số rủi ro cao hoặc thiếu dữ liệu theo policy.
+   region/zone và chế độ tối ưu. Chế độ **Tiết kiệm** ưu tiên giá Spot thấp nhất,
+   không loại ứng viên theo chỉ số rủi ro hoặc khi thiếu dữ liệu rủi ro.
 2. Chọn **Tìm máy phù hợp**. Kết quả phải đồng thời thỏa nhu cầu, có offering,
    có giá Spot và nằm trong launch allowlist. Chọn cấu hình, xem so sánh giá.
-3. Bấm **Tạo máy Spot** để gửi yêu cầu tạo VM thật. Cả ba chế độ đều tạo Spot;
+3. Bấm **Tạo máy Spot** để gửi yêu cầu tạo VM thật. Cả hai chế độ đều tạo Spot;
    On-demand chỉ là giá tham chiếu. Số giờ dự kiến không tự tắt máy.
 4. Trong chi tiết máy, theo dõi `PENDING → PROVISIONING → RUNNING`, IP/lệnh SSH,
    chi phí và lịch sử instance. `RUNNING` chưa bảo đảm cloud-init/SSH/job sẵn sàng.
@@ -817,7 +817,7 @@ Source được copy lúc build, không mount trực tiếp; sửa Python **ho�
 | Task không thoát `PENDING` | Kiểm tra worker/Redis và log; `/health` không kiểm tra worker. |
 | `/dashboard/` trả 404 hoặc giao diện cũ | Dùng đúng `localhost:8080`; build lại image API và recreate API/Nginx. Static assets nằm trong image; refresh trình duyệt sau khi cập nhật. |
 | Tạo máy báo chưa cấu hình launch | Thêm `SPULTI_LAUNCH_CONFIG` vào `.env.local`, recreate API/worker, không chỉ `restart`. |
-| Không có đề xuất | Kiểm tra catalog/offerings theo mục 8.3, giá Spot theo mục 8.4, region/zone khớp launch profile và tài nguyên tối thiểu. Mở rộng bộ lọc hoặc dùng Cân bằng. |
+| Không có đề xuất | Kiểm tra catalog/offerings theo mục 8.3, giá Spot theo mục 8.4, region/zone khớp launch profile và tài nguyên tối thiểu. Mở rộng bộ lọc. |
 | Chi phí/giá On-demand hiện `—` | Chưa có giá cho type/region/khoảng thời gian đó; chạy collector AWS On-demand và kiểm tra quyền Pricing. GCP chưa có collector On-demand. |
 | Checkpoint báo storage unavailable | Kiểm tra bucket/region và credentials/quyền S3 của **API**, không chỉ worker. |
 | VM chạy nhưng job không heartbeat | Kiểm tra `SPULTI_PUBLIC_API_URL` truy cập được từ VM qua HTTPS, agent archive/hash, cloud-init và systemd agent; `localhost:8080` trên VM không trỏ về laptop. |

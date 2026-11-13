@@ -139,7 +139,7 @@ Sau đó gọi `POST /api/machines`:
   "vcpu": 4,
   "ram_gib": 16,
   "region": "singapore",
-  "optimization_mode": "BALANCED",
+  "optimization_mode": "SAVING",
   "job_id": "<uuid-job-da-dang-ky>"
 }
 ```

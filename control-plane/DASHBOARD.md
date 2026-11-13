@@ -276,7 +276,7 @@ hành vi cũ cho CLI. API chỉ trả location đã cấu hình, không trả su
 ứng nhu cầu và còn trong danh sách xếp hạng. Nếu không còn phù hợp, trả 409 và yêu
 cầu tìm lại cấu hình. Nếu phù hợp, đưa ứng viên lên đầu; các ứng viên khác vẫn
 được giữ để fallback. Recovery và lần thử lại thủ công xếp hạng lại theo nhu cầu
-ban đầu, bỏ qua ưu tiên ban đầu. Ba chế độ SAVING/BALANCED/STABLE đều sử dụng Spot; không đổi sang
+ban đầu, bỏ qua ưu tiên ban đầu. Hai chế độ SAVING/STABLE đều sử dụng Spot; không đổi sang
 On-demand. Recommendation không đảm bảo quota hoặc capacity còn sẵn.
 
 Dashboard lưu body/mã `Idempotency-Key` trước khi gửi. Nếu mất phản hồi hoặc lỗi

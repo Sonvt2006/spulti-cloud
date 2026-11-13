@@ -39,12 +39,12 @@ Tên key mặc định là `<username>-<tên máy>`; đổi bằng `login --key-
 spulti ssh-key add laptop --file ~/.ssh/id_ed25519.pub
 spulti ssh-key list
 spulti catalog --vcpu 2 --ram-gib 4 --provider AWS
-spulti placement --vcpu 2 --ram-gib 4 --region singapore --optimization-mode BALANCED
+spulti placement --vcpu 2 --ram-gib 4 --region singapore --optimization-mode SAVING
 ```
 
 Chỉ gửi SSH **public key** (`.pub`). API hiện hỗ trợ thêm và liệt kê SSH key. Đăng ký ít nhất một key trước khi tạo máy.
 
-`catalog` liệt kê cấu hình, còn `placement` xếp hạng ứng viên spot theo giá/rủi ro. Placement không tạo máy hoặc giữ chỗ tài nguyên. Các bộ lọc gồm `--provider AWS|GCP`, `--region`, `--zone`, `--gpu-count`; chế độ tối ưu gồm `SAVING`, `STABLE`, `BALANCED`. `--region singapore` là nhóm khu vực chung AWS/GCP. Xem [Placement](../control-plane/PLACEMENT.md) về ý nghĩa điểm xếp hạng.
+`catalog` liệt kê cấu hình, còn `placement` xếp hạng ứng viên spot theo giá/rủi ro. Placement không tạo máy hoặc giữ chỗ tài nguyên. Các bộ lọc gồm `--provider AWS|GCP`, `--region`, `--zone`, `--gpu-count`; chế độ tối ưu gồm `SAVING`, `STABLE`. `--region singapore` là nhóm khu vực chung AWS/GCP. Xem [Placement](../control-plane/PLACEMENT.md) về ý nghĩa điểm xếp hạng.
 
 ## Quản lý máy
 
