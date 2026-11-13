@@ -100,18 +100,19 @@ def collect_market_data(provider: str, dataset: str) -> dict:
                 processed = result["regions_ok"]
             else:
                 project = os.getenv("MARKET_GCP_PROJECT_ID", "spulti-cloud").strip()
-                region = os.getenv("MARKET_GCP_REGION", "asia-southeast1").strip()
-                if not project or not region:
-                    raise ValueError("GCP project and region must be specified")
+
+                zones = _csv_env("MARKET_GCP_ZONES", "asia-southeast1-b")
+
+                if not project or not zones:
+                    raise ValueError("GCP project and zones must be specified")
+
+                region_zones = [(zone.rsplit("-", 1)[0], zone) for zone in zones]
+
                 if dataset == "prices":
-                    locations = [(region, None)]
+                    locations = sorted({(region, None) for region, _ in region_zones})
                 else:
-                    zones = _csv_env("MARKET_GCP_ZONES", "asia-southeast1-b")
-                    if not zones:
-                        raise ValueError("MARKET_GCP_ZONES cannot be empty")
-                    if any(not zone.startswith(f"{region}-") for zone in zones):
-                        raise ValueError("GCP zone does not match MARKET_GCP_REGION")
-                    locations = [(region, zone) for zone in zones]
+                    locations = sorted(set(region_zones))
+
                 result = collect_gcp(
                     project,
                     locations,
