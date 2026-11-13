@@ -2,8 +2,10 @@
 
 VM do Instance Manager tạo luôn chạy `spulti-node-agent.service` (`agent.py daemon`)
 để gửi heartbeat mỗi 20 giây và theo dõi thu hồi, kể cả khi không có job.
-Managed job chạy riêng trong `spulti-job-agent.service`; hoàn thành job không dừng
-giám sát máy. Xem [triển khai và recovery](../control-plane/RECOVERY.md).
+Managed job chạy riêng trong `spulti-job-agent.service`; khi job hoàn thành và
+checkpoint cuối đã lưu thành công, Control Plane tự xóa instance gắn với job.
+Node-agent tiếp tục giám sát cho tới lúc VM bị xóa. Job độc lập submit qua SSH
+chưa gắn máy không tự xóa instance. Xem [triển khai và recovery](../control-plane/RECOVERY.md).
 
 **Chạy file Python sau khi SSH:** xem [SSH_JOBS.md](SSH_JOBS.md). Dùng `spulti-agent submit hello.py --total-steps 100` để kiểm tra cú pháp, tự đăng ký job và chạy toàn bộ file 100 lượt. File lỗi bị dừng và báo lỗi. Code cần khôi phục kết quả dùng `spulti.state`; `spulti-agent resume JOB_ID` tải lại code/checkpoint. Các lệnh bên dưới chạy workload demo tổng bình phương có sẵn.
 
@@ -32,7 +34,7 @@ spulti-cloud/
     └── README.md
 ```
 
-Copy thư mục `node-agent/` vào **gốc repository**, ngang hàng với `control-plane/` (không đặt vào bên trong `control-plane/app/`). Cần **Python 3.11+**. Không cần `pip install` cho MVP.
+Copy thư mục `node-agent/` vào **gốc repository**, ngang hàng với `control-plane/` (không đặt vào bên trong `control-plane/app/`). Cần **Python 3.10+**. Không cần `pip install` cho MVP.
 
 ## 2. Chạy trên Windows PowerShell
 

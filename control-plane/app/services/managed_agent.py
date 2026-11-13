@@ -82,6 +82,23 @@ def startup_script(
             "SPULTI_JOB_ID": job_id,
         }
         env_bootstrap += write_env("/etc/spulti-agent.env", config)
+
+    return (
+        "#!/bin/bash\n"
+        "set -euo pipefail\n"
+        "set +x\n"
+        "umask 077\n"
+        + env_bootstrap
+        + f"export SPULTI_AGENT_DOWNLOAD_URL={shlex.quote(release)}\n"
+        + f"export SPULTI_AGENT_SHA256={shlex.quote(digest)}\n"
+        + installation_script(provider, user_script)
+    )
+
+
+def installation_script(provider: str, user_script: str = "") -> str:
+    """Install services using credentials already present on the node."""
+    if provider not in {"AWS", "GCP"}:
+        raise ValueError("Node provider must be AWS or GCP")
     installer = INSTALL_SCRIPT.replace(
         "SPULTI_CLOUD_PROVIDER=gcp",
         f"SPULTI_CLOUD_PROVIDER={provider.lower()}",
@@ -160,14 +177,5 @@ echo "BOOTSTRAP: node monitor started"
 """.replace("__CLOUD__", provider.lower())
 
     return (
-        "#!/bin/bash\n"
-        "set -euo pipefail\n"
-        "set +x\n"
-        "umask 077\n"
-        + env_bootstrap
-        + f"export SPULTI_AGENT_DOWNLOAD_URL={shlex.quote(release)}\n"
-        + f"export SPULTI_AGENT_SHA256={shlex.quote(digest)}\n"
-        + installer
-        + ("(\n" + user_script + "\n)\n" if user_script else "")
-        + job_start
+        installer + ("(\n" + user_script + "\n)\n" if user_script else "") + job_start
     )

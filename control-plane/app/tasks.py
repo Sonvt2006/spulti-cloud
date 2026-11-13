@@ -7,9 +7,9 @@ from uuid import uuid4
 from app.celery_app import celery_app
 from app.database import SessionLocal
 from app.models import Machine, MachineLifecycle
-from app.services.instance_manager import reconcile_machine
+from app.services.instance_manager import completed_job_machines, reconcile_machine
 from redis import Redis
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 
 @celery_app.task(name="spulti.demo_add")
@@ -164,8 +164,16 @@ def reconcile_machines() -> None:
             .join(Machine, Machine.id == MachineLifecycle.machine_id)
             .where(
                 Machine.status != "DELETED",
-                MachineLifecycle.blocked.is_(False),
-                MachineLifecycle.next_action_at <= datetime.now(UTC),
+                or_(
+                    and_(
+                        MachineLifecycle.blocked.is_(False),
+                        MachineLifecycle.next_action_at <= datetime.now(UTC),
+                    ),
+                    and_(
+                        MachineLifecycle.delete_requested.is_(False),
+                        MachineLifecycle.machine_id.in_(completed_job_machines()),
+                    ),
+                ),
             )
             .order_by(MachineLifecycle.next_action_at, MachineLifecycle.machine_id)
             .limit(500)

@@ -20,6 +20,7 @@ __pycache__/
 !.env.example
 !.env.local.example
 .local/
+/dist/
 *.pem
 *.dump
 

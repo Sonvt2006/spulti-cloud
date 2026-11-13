@@ -438,6 +438,19 @@ def _failed(life: MachineLifecycle, message: str, *, permanent: bool = False) ->
     )
 
 
+def completed_job_machines():
+    """Only bound jobs with a persisted final checkpoint may retire a machine."""
+    return (
+        select(MachineJob.machine_id)
+        .join(AgentJob, AgentJob.id == MachineJob.job_id)
+        .where(
+            AgentJob.status == "COMPLETED",
+            AgentJob.checkpoint_step == AgentJob.total_steps,
+            AgentJob.checkpoint_data.is_not(None),
+        )
+    )
+
+
 def reconcile_machine(db: Session, machine_id: int) -> None:
     """PostgreSQL row lock serializes workers; commits precede cloud side effects.
 
@@ -455,12 +468,26 @@ def reconcile_machine(db: Session, machine_id: int) -> None:
         return
     life = db.get(MachineLifecycle, machine_id, populate_existing=True)
     now = datetime.now(UTC)
+    if life is None or machine.status == "DELETED":
+        return
     if (
-        life is None
-        or life.blocked
-        or machine.status == "DELETED"
-        or _utc(life.next_action_at) > now
+        not life.delete_requested
+        and db.scalar(
+            completed_job_machines().where(MachineJob.machine_id == machine_id)
+        )
+        is not None
     ):
+        # Commit intent before cloud IO. Beat can resume deletion after a crash,
+        # including when recovery was blocked or the final heartbeat was lost.
+        life.delete_requested = True
+        life.blocked = False
+        life.failures = 0
+        life.last_error = None
+        life.next_action_at = now
+        recovery.cancel_recovery(db, machine_id)
+        db.commit()
+        return
+    if life.blocked or _utc(life.next_action_at) > now:
         return
     run = recovery.pending_run(db, machine_id)
     if life.delete_requested:

@@ -9,7 +9,7 @@ import threading
 import time
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.error import HTTPError, URLError
@@ -28,6 +28,8 @@ from interruption import (  # noqa: E402
     StopRequest,
 )
 from job_runner import run_job  # noqa: E402
+
+UTC = timezone.utc  # noqa: UP017 - Tests also run on Ubuntu 22.04/Python 3.10.
 
 
 def http_error(code):

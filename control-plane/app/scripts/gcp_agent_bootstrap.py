@@ -10,7 +10,7 @@ INSTALL_SCRIPT = r"""
 set -euo pipefail
 umask 077
 
-# Target: official Ubuntu 24.04 image, Python 3.12.
+# Target: updated Ubuntu 22.04/24.04, Python 3.10/3.12.
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq python3 ca-certificates

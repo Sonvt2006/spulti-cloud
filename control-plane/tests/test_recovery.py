@@ -9,7 +9,15 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import test_instance_manager as fixtures
-from app.models import AgentJob, InstanceAttempt, MachineJob, NodeAgent, RecoveryRun
+from app.models import (
+    AgentJob,
+    Instance,
+    InstanceAttempt,
+    MachineJob,
+    MachineLifecycle,
+    NodeAgent,
+    RecoveryRun,
+)
 from sqlalchemy import func, select
 
 
@@ -35,7 +43,7 @@ class RecoveryTests(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
 
-    def running(self, managed=False):
+    def running(self, managed=False, provider=None):
         job = None
         if managed:
             response = self.client.post(
@@ -43,9 +51,13 @@ class RecoveryTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 201, response.text)
             job = response.json()
-        machine_id = self.provision(**({"job_id": job["job_id"]} if job else {}))
-        key = self.cloud.specs[0].request_id
-        self.cloud.instances[key] = replace(self.cloud.instances[key], status="running")
+        machine_id = self.provision(
+            **({"provider": provider} if provider else {}),
+            **({"job_id": job["job_id"]} if job else {}),
+        )
+        cloud = self.gcp if provider == "GCP" else self.cloud
+        key = cloud.specs[0].request_id
+        cloud.instances[key] = replace(cloud.instances[key], status="running")
         self.tick(machine_id)
         return machine_id, job
 
@@ -174,6 +186,158 @@ class RecoveryTests(unittest.TestCase):
         self.db.commit()
         self.tick(machine_id)
         self.assertIsNone(self.db.scalar(select(RecoveryRun)))
+
+    def complete(self, machine_id, created, *, fail=False):
+        """Exercise the actual completion API; no final heartbeat is required."""
+        with patch("app.agent_api.S3CheckpointStore") as storage:
+            storage.return_value.save.return_value = {
+                "storage": "s3",
+                "key": "final-checkpoint.json",
+                "status": "COMPLETED",
+            }
+            if fail:
+                storage.return_value.save.side_effect = RuntimeError("unavailable")
+            return self.client.put(
+                f"/api/agent/jobs/{created['job_id']}/checkpoint",
+                headers={"X-Agent-Token": self.current_token(machine_id)},
+                json={
+                    "version": 1,
+                    "job_id": created["job_id"],
+                    "total_steps": created["total_steps"],
+                    "last_completed_step": created["total_steps"],
+                    "status": "COMPLETED",
+                },
+            )
+
+    def test_final_checkpoint_deletes_aws_and_gcp_without_replacement(self):
+        for provider in ("AWS", "GCP"):
+            with self.subTest(provider=provider):
+                machine_id, created = self.running(managed=True, provider=provider)
+                cloud = self.cloud if provider == "AWS" else self.gcp
+                self.assertEqual(self.complete(machine_id, created).status_code, 200)
+                self.tick(machine_id)  # persist intent before cloud side effects
+                self.assertTrue(self.view(machine_id)["delete_requested"])
+                self.assertEqual(cloud.deleted, [])
+                self.tick(machine_id)  # send cloud deletion
+                self.assertEqual(len(cloud.deleted), 1)
+                self.assertNotEqual(self.view(machine_id)["status"], "DELETED")
+                self.tick(machine_id)  # confirm absence/termination
+                self.assertEqual(self.view(machine_id)["status"], "DELETED")
+                job = self.db.get(AgentJob, created["job_id"])
+                self.assertEqual(job.status, "COMPLETED")
+                self.assertIsNotNone(job.checkpoint_data)
+                instance = self.db.scalar(
+                    select(Instance).where(Instance.machine_id == machine_id)
+                )
+                self.assertIsNotNone(instance.ended_at)
+                self.tick(machine_id)  # duplicate delivery is harmless
+                self.assertEqual(len(cloud.deleted), 1)
+                self.assertEqual(len(cloud.specs), 1)
+                self.assertIsNone(self.db.scalar(select(RecoveryRun)))
+
+    def test_failed_final_upload_does_not_delete_instance(self):
+        machine_id, created = self.running(managed=True)
+        self.assertEqual(self.complete(machine_id, created, fail=True).status_code, 503)
+        self.tick(machine_id)
+        self.assertFalse(self.view(machine_id)["delete_requested"])
+        self.assertEqual(self.cloud.deleted, [])
+        self.assertNotEqual(
+            self.db.get(AgentJob, created["job_id"]).status, "COMPLETED"
+        )
+
+    def test_completion_precedes_node_timeout_and_instance_loss(self):
+        machine_id, created = self.running(managed=True)
+        binding = self.db.get(MachineJob, machine_id)
+        self.db.get(NodeAgent, binding.active_attempt_id).last_heartbeat_at = (
+            datetime.now(UTC) - timedelta(hours=1)
+        )
+        self.db.commit()
+        self.assertEqual(self.complete(machine_id, created).status_code, 200)
+        self.cloud.instances.clear()
+        for _ in range(4):
+            self.tick(machine_id)
+        self.assertEqual(self.view(machine_id)["status"], "DELETED")
+        self.assertIsNone(self.db.scalar(select(RecoveryRun)))
+        self.assertEqual(self.gcp.specs, [])
+
+    def test_completion_cancels_pending_recovery(self):
+        machine_id, created = self.running(managed=True)
+        self.assertEqual(self.complete(machine_id, created).status_code, 200)
+        binding = self.db.get(MachineJob, machine_id)
+        self.db.add(
+            RecoveryRun(
+                machine_id=machine_id,
+                failed_attempt_id=binding.active_attempt_id,
+                reason="INSTANCE_LOST",
+                state="PLACEMENT",
+                excluded_until=datetime.now(UTC),
+            )
+        )
+        self.db.commit()
+        self.tick(machine_id)
+        self.assertEqual(self.db.scalar(select(RecoveryRun)).state, "CANCELLED")
+        self.assertEqual(self.gcp.specs, [])
+
+    def test_completion_wakes_blocked_machine_and_delete_retries_stay_bounded(self):
+        from app import tasks
+
+        machine_id, created = self.running(managed=True)
+        life = self.db.get(MachineLifecycle, machine_id)
+        life.blocked = True
+        life.next_action_at = datetime.now(UTC) + timedelta(hours=1)
+        self.db.commit()
+        self.assertEqual(self.complete(machine_id, created).status_code, 200)
+        with (
+            patch.object(tasks, "SessionLocal") as sessions,
+            patch.object(tasks.sync_machine, "apply_async") as wake,
+        ):
+            sessions.return_value.__enter__.return_value = self.db
+            tasks.reconcile_machines.run()
+            wake.assert_called_once_with(args=[machine_id], retry=False, expires=60)
+        # The worker also bypasses the old recovery block/backoff once.
+        fixtures.reconcile_machine(self.db, machine_id)
+        self.assertTrue(life.delete_requested)
+        self.assertFalse(life.blocked)
+        with patch.object(self.cloud, "delete_instance", side_effect=TimeoutError):
+            with self.assertLogs("app.services.instance_manager", level="ERROR"):
+                for _ in range(5):
+                    self.tick(machine_id)
+        self.assertTrue(self.view(machine_id)["needs_attention"])
+        with (
+            patch.object(tasks, "SessionLocal") as sessions,
+            patch.object(tasks.sync_machine, "apply_async") as wake,
+        ):
+            sessions.return_value.__enter__.return_value = self.db
+            tasks.reconcile_machines.run()
+            wake.assert_not_called()
+        self.assertEqual(self.gcp.specs, [])
+
+    def test_temporary_delete_failure_retries_without_losing_completion(self):
+        machine_id, created = self.running(managed=True)
+        self.assertEqual(self.complete(machine_id, created).status_code, 200)
+        self.tick(machine_id)
+        with patch.object(self.cloud, "delete_instance", side_effect=TimeoutError):
+            with self.assertLogs("app.services.instance_manager", level="ERROR"):
+                self.tick(machine_id)
+        self.assertTrue(self.view(machine_id)["delete_requested"])
+        self.tick(machine_id)
+        self.tick(machine_id)
+        self.assertEqual(self.view(machine_id)["status"], "DELETED")
+        self.assertEqual(self.db.get(AgentJob, created["job_id"]).status, "COMPLETED")
+
+    def test_unbound_completed_job_does_not_delete_ssh_machine(self):
+        machine_id, _ = self.running()
+        created = self.client.post(
+            "/api/agent/jobs", headers=self.headers(), json={}
+        ).json()
+        job = self.db.get(AgentJob, created["job_id"])
+        job.status = "COMPLETED"
+        job.checkpoint_step = job.total_steps
+        job.checkpoint_data = {"status": "COMPLETED"}
+        self.db.commit()
+        self.tick(machine_id)
+        self.assertFalse(self.view(machine_id)["delete_requested"])
+        self.assertEqual(self.cloud.deleted, [])
 
     def test_delete_cancels_recovery_without_replacement(self):
         machine_id, _ = self.running()
