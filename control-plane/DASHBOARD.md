@@ -30,6 +30,8 @@ Tổng quan/danh sách/chi tiết được kiểm tra lại mỗi 15 giây khi t
 không thay nội dung lúc người dùng đang tương tác với form, nút hoặc bảng mở rộng.
 Có nút làm mới thủ công. Đây là dữ liệu đã được worker đồng bộ vào database,
 không phải truy vấn trực tiếp EC2/GCP mỗi lần mở trang.
+Mở/đóng bảng số liệu theo ngày không làm dừng tự cập nhật; trạng thái mở và vị trí
+focus ở tiêu đề bảng được giữ lại sau mỗi lần làm mới.
 
 ## Cách gắn vào kiến trúc hiện tại
 
@@ -208,17 +210,39 @@ Chi phí là **ước tính compute**, không phải hóa đơn AWS/GCP:
 chi phí = tổng (số giây instance chạy trong khoảng × đơn giá/giờ của khoảng / 3600)
 ```
 
+- Biểu đồ mặc định **Lũy kế**: điểm cuối bằng tổng chi phí trong kỳ đang chọn.
+  Chuyển sang **Theo ngày** để xem riêng từng ngày UTC. Ví dụ ngày 12 tốn
+  `$0.0709`, ngày 13 tốn `$0.0236` thì tổng kỳ là `$0.0945`; đường theo ngày không
+  kết thúc ở `$0.0945`. Bảng bên dưới luôn liệt kê chi phí riêng của từng ngày.
+- On-demand là chi phí giả định nếu chạy On-demand, không phải khoản đã thanh
+  toán thêm. Nếu thiếu giá của một đoạn thời gian, các ô chi phí và biểu đồ vẫn
+  hiển thị phần đã tính được với dấu **≥** và ghi rõ số giờ thiếu giá. Đường chứa
+  dữ liệu chưa đầy đủ có nét đứt; tooltip ghi **phần đã tính được**. Tổng đầy đủ
+  và chênh lệch tiết kiệm vẫn chưa xác định, không coi giá thiếu là giá bằng 0.
+  Thu thập lại giá hiện tại không đảm bảo bổ sung được toàn bộ lịch sử cũ.
+- Tổng quan cộng tất cả instance có thời gian chạy trong kỳ, kể cả máy đã xóa
+  và các instance trước recovery. Số **Máy đang quản lý** chỉ đếm máy chưa xóa.
+  Vì vậy hai máy hiện tại đủ giá vẫn có thể đi kèm tổng kỳ thiếu giá của máy cũ.
+  Mở **Thiếu lịch sử giá ở … máy trong kỳ** để xem tên/trạng thái, số giờ thiếu
+  giá Spot và On-demand, cùng liên kết đến chi tiết từng máy (tối đa 20 máy).
+  API tổng quan trả `missing_price_machine_count` và `missing_price_machines`,
+  chỉ gồm dữ liệu thuộc tài khoản đang đăng nhập.
 - Dùng `Decimal` và chỉ làm tròn kết quả API tới 6 chữ số thập phân. Frontend
   định dạng USD; dự tính số giờ trên form là phép nhân đơn giản theo giá hiện tại.
 - Chia khoảng tại mỗi lần giá thay đổi, lúc bắt đầu/kết thúc instance và ranh
   giới ngày UTC. Khoảng gián đoạn giữa các instance không bị cộng thời gian.
+- AWS collector giữ tất cả mốc giá trả về trong cửa sổ một giờ, kể cả giá có
+  hiệu lực trước đầu cửa sổ, thay vì chỉ giữ mốc mới nhất của mỗi loại máy/zone.
+  Các mốc trùng giữa các trang/lượt thu thập được loại trùng. Xem
+  [DescribeSpotPriceHistory](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeSpotPriceHistory.html).
 - Một Machine có thể có nhiều Instance khác loại, zone hoặc cloud. Tính từng
   instance theo giá của chính loại máy/vùng đó rồi cộng lại; không tính lại lịch
   sử theo cấu hình hiện tại.
 - Giá zone được ưu tiên hơn giá region kể từ thời điểm hiệu lực. Không mượn giá
   zone khác hoặc lấy giá tương lai để lấp lịch sử còn thiếu.
-- Thiếu giá ở bất kỳ khoảng nào: tổng tương ứng và chênh lệch là `null` (`—` trên
-  giao diện); vẫn trả phần chi phí đã biết và số giờ chưa có giá. Đây là lý do
+- Thiếu giá ở bất kỳ khoảng nào: API giữ tổng tương ứng và chênh lệch là `null`;
+  UI dùng `known_spot_cost` / `known_on_demand_cost` để hiển thị số tiền tối thiểu
+  đã tính được, kèm số giờ thiếu giá. Chênh lệch vẫn hiện `—`. Đây là lý do
   dữ liệu mới thu thập có thể chưa đủ để so sánh toàn bộ vòng đời máy cũ.
 - Giá hiện tại tiếp tục dùng bản ghi gần nhất có hiệu lực như placement hiện có;
   chưa áp dụng thời hạn hết hiệu lực cho dữ liệu market. UI hiển thị thời điểm

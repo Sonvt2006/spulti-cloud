@@ -154,6 +154,13 @@ def run_browser(base_url, factory, output):
             viewport={"width": 1440, "height": 1000}, reduced_motion="reduce"
         )
         page = context.new_page()
+        page.add_init_script("""
+            const originalInterval = window.setInterval;
+            window.setInterval = (callback, delay, ...args) => {
+                if (delay === 15000) window.testDashboardPoll = callback;
+                return originalInterval(callback, delay, ...args);
+            };
+        """)
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.on(
             "console",
@@ -174,6 +181,100 @@ def run_browser(base_url, factory, output):
         expect(page.get_by_role("heading", name="Tổng quan workspace")).to_be_visible()
         assert page.evaluate("document.activeElement.id") == "content"
         expect(page.locator(".machine-table tbody tr")).to_have_count(3)
+
+        def daily_cost_fixture(route):
+            response = route.fetch()
+            data = response.json()
+            data["cost"].update(
+                spot_cost="0.094500",
+                on_demand_cost=None,
+                known_on_demand_cost="0.066700",
+                missing_on_demand_hours="2.000000",
+                savings=None,
+                savings_percent=None,
+                complete=False,
+            )
+            data["missing_price_machine_count"] = 1
+            data["missing_price_machines"] = [
+                {
+                    "id": 900,
+                    "name": "old-machine-without-demand-history",
+                    "status": "DELETED",
+                    "missing_spot_hours": "0.000000",
+                    "missing_on_demand_hours": "2.000000",
+                }
+            ]
+            data["daily"] = [
+                {
+                    "date": f"2026-11-{day:02d}",
+                    "spot_cost": "0.070900"
+                    if day == 12
+                    else "0.023600"
+                    if day == 13
+                    else "0.000000",
+                    "on_demand_cost": None
+                    if day == 12
+                    else "0.059000"
+                    if day == 13
+                    else "0.000000",
+                    "known_on_demand_cost": "0.007700"
+                    if day == 12
+                    else "0.059000"
+                    if day == 13
+                    else "0.000000",
+                    "runtime_hours": "1.000000" if day >= 12 else "0.000000",
+                }
+                for day in range(7, 14)
+            ]
+            route.fulfill(response=response, json=data)
+
+        page.route("**/api/dashboard?*", daily_cost_fixture)
+        page.get_by_role("button", name="Làm mới dữ liệu").click()
+        expect(
+            page.get_by_role("heading", name="Chi phí lũy kế trong kỳ")
+        ).to_be_visible()
+        expect(page.locator(".spot-line-point title").last).to_have_text(
+            "2026-11-13 · Lũy kế Spot: $0.0945"
+        )
+        expect(page.locator(".chart-note").last).to_contain_text(
+            "Thiếu lịch sử giá On-demand"
+        )
+        # Known costs remain visible with explicit incomplete-total labels.
+        expect(page.locator(".stats .stat").nth(2)).to_contain_text("≥ $0.0667")
+        expect(page.locator(".stats .stat").nth(2)).to_contain_text("thiếu giá 2 giờ")
+        expect(page.locator(".stats .stat").nth(3)).to_contain_text("—")
+        expect(page.locator(".demand-line-point")).to_have_count(7)
+        expect(page.locator(".demand-line-point title").last).to_have_text(
+            "2026-11-13 · Lũy kế On-demand: ≥ $0.0667 · phần đã tính được"
+        )
+        page.locator(".price-coverage summary").click()
+        expect(page.locator(".price-coverage")).to_contain_text(
+            "old-machine-without-demand-history"
+        )
+        expect(page.locator(".price-coverage")).to_contain_text("Đã xóa")
+        expect(page.locator(".price-coverage a")).to_have_attribute(
+            "href", "#/machines/900"
+        )
+        page.set_viewport_size({"width": 390, "height": 844})
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(output / "missing-price-mobile.png"), full_page=True)
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        page.get_by_label("Cách xem chi phí").select_option("daily")
+        expect(page.get_by_role("heading", name="Chi phí theo ngày")).to_be_visible()
+        expect(page.locator(".spot-line-point title").last).to_have_text(
+            "2026-11-13 · Trong ngày Spot: $0.0236"
+        )
+        page.locator(".chart-data summary").click()
+        with page.expect_response("**/api/dashboard?*"):
+            page.evaluate("window.testDashboardPoll()")
+        expect(page.locator(".chart-data")).to_have_attribute("open", "")
+        expect(page.locator(".chart-data summary")).to_be_focused()
+        expect(page.get_by_label("Cách xem chi phí")).to_have_value("daily")
+        page.unroute("**/api/dashboard?*")
+        page.get_by_label("Cách xem chi phí").select_option("cumulative")
+        expect(
+            page.get_by_role("heading", name="Chi phí lũy kế trong kỳ")
+        ).to_be_visible()
         page.screenshot(path=str(output / "overview-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 390, "height": 844})
         page.screenshot(path=str(output / "overview-mobile.png"), full_page=True)

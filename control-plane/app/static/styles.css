@@ -554,6 +554,31 @@ small {
   margin-bottom: 23px
 }
 
+.chart-panel {
+  align-self: start;
+}
+
+.chart-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.chart-note {
+  margin: 0 24px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.price-coverage {
+  padding-top: 18px;
+}
+
+.chart path.partial-cost-line {
+  stroke-dasharray: 3 5;
+}
+
 .legend {
   display: flex;
   gap: 17px;

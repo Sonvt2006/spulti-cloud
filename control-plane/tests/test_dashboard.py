@@ -91,6 +91,47 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(result["total"]["spot_price_per_hour"], "0.200000")
         self.assertEqual(result["machines"][machine_id]["spot_cost"], "0.500000")
 
+    def test_collected_spot_history_preserves_every_price_interval(self):
+        from app.adapters.aws import AWSAdapter
+
+        begin = datetime.now(UTC) - timedelta(hours=1)
+        instance = self.instance(begin, begin + timedelta(hours=1))
+        self.db.execute(delete(SpotPrice))
+        self.db.commit()
+
+        def quote(at, price):
+            return {
+                "InstanceType": "m6i.xlarge",
+                "AvailabilityZone": "ap-southeast-1a",
+                "SpotPrice": price,
+                "Timestamp": at,
+            }
+
+        baseline = quote(begin - timedelta(hours=1), "0.10")
+        middle = quote(begin + timedelta(minutes=30), "0.20")
+        latest = quote(begin + timedelta(minutes=45), "0.40")
+        with patch("app.adapters.aws.boto3.client") as client:
+            client.return_value.get_paginator.return_value.paginate.return_value = [
+                {"SpotPriceHistory": [latest, middle]},
+                {"SpotPriceHistory": [middle, baseline]},
+            ]
+            prices = AWSAdapter.get_spot_prices("ap-southeast-1", ["m6i.xlarge"])
+        self.assertEqual(len(prices), 3)
+        with patch(
+            "app.services.market_data_collector.SessionLocal", sessionmaker(self.engine)
+        ):
+            data = MarketData(prices=prices, risks=[])
+            self.assertEqual(save_market_data(data)["prices_saved"], 3)
+            self.assertEqual(save_market_data(data)["prices_saved"], 0)
+        result = estimate_costs(
+            self.db, [instance], now=begin + timedelta(hours=1), start=begin, daily=True
+        )
+        # 30 minutes at .10, 15 at .20 and 15 at .40, not an hour at .40.
+        self.assertEqual(result["total"]["spot_cost"], "0.200000")
+        self.assertEqual(
+            sum(Decimal(day["spot_cost"]) for day in result["daily"]), Decimal("0.20")
+        )
+
     def test_missing_history_is_null_no_future_or_cross_zone_backfill(self):
         begin = datetime(2026, 2, 1, tzinfo=UTC)
         row = self.instance(begin, begin + timedelta(hours=2))
@@ -121,6 +162,65 @@ class DashboardTests(unittest.TestCase):
         )["total"]
         self.assertEqual(cost["spot_cost"], "0.500000")
         self.assertEqual(cost["on_demand_cost"], "3.000000")
+
+    def test_overview_keeps_known_demand_and_identifies_old_machine_missing_price(self):
+        now = datetime(2026, 11, 13, 16, tzinfo=UTC)
+        first = self.instance(now - timedelta(hours=2))
+        second = self.instance(now - timedelta(hours=1))
+        old = self.instance(now - timedelta(days=1, hours=2), now - timedelta(days=1))
+        self.db.get(Machine, first.machine_id).status = "RUNNING"
+        self.db.get(Machine, second.machine_id).status = "RUNNING"
+        old_machine = self.db.get(Machine, old.machine_id)
+        old_machine.status = "DELETED"
+        old_machine.name = "old-machine-without-demand-history"
+        self.db.commit()
+        self.price(now - timedelta(days=2), "0.1")
+        self.price(now - timedelta(hours=3), "0.4", "ON_DEMAND", None)
+        with patch("app.dashboard.datetime") as clock:
+            clock.now.return_value = now
+            data = self.client.get(
+                "/api/dashboard?days=7", headers=self.headers()
+            ).json()
+            other = self.client.get(
+                "/api/dashboard?days=7", headers=self.headers(self.other)
+            ).json()
+            for instance, expected in ((first, "0.800000"), (second, "0.400000")):
+                detail = self.client.get(
+                    f"/api/dashboard/machines/{instance.machine_id}?days=7",
+                    headers=self.headers(),
+                ).json()
+                self.assertEqual(detail["cost"]["on_demand_cost"], expected)
+        self.assertEqual(data["counts"]["active"], 2)
+        self.assertEqual(data["cost"]["spot_cost"], "0.500000")
+        self.assertIsNone(data["cost"]["on_demand_cost"])
+        self.assertEqual(data["cost"]["known_on_demand_cost"], "1.200000")
+        self.assertEqual(data["cost"]["missing_on_demand_hours"], "2.000000")
+        self.assertIsNone(data["cost"]["savings"])
+        self.assertEqual(data["missing_price_machine_count"], 1)
+        self.assertEqual(
+            data["missing_price_machines"],
+            [
+                {
+                    "id": old.machine_id,
+                    "name": old_machine.name,
+                    "status": "DELETED",
+                    "missing_spot_hours": "0.000000",
+                    "missing_on_demand_hours": "2.000000",
+                }
+            ],
+        )
+        self.assertEqual(other["missing_price_machine_count"], 0)
+        self.assertEqual(other["missing_price_machines"], [])
+        # Once authentic historical rates exist, the complete total recovers.
+        self.price(now - timedelta(days=2), "0.4", "ON_DEMAND", None)
+        with patch("app.dashboard.datetime") as clock:
+            clock.now.return_value = now
+            complete = self.client.get(
+                "/api/dashboard?days=7", headers=self.headers()
+            ).json()
+        self.assertEqual(complete["cost"]["on_demand_cost"], "2.000000")
+        self.assertEqual(complete["missing_price_machine_count"], 0)
+        self.assertEqual(complete["missing_price_machines"], [])
 
     def test_owner_scopes_counts_detail_and_price_totals(self):
         machine_id = self.provision()

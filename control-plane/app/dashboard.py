@@ -343,6 +343,23 @@ def overview(user: CurrentUser, db: DbSession, days: Days = 30) -> dict:
     )
     instances = owned_instances(db, user.id, start=start)
     costs = estimate_costs(db, instances, now=now, start=start, daily=True)
+    missing_ids = [
+        machine_id
+        for machine_id, cost in costs["machines"].items()
+        if not cost["complete"]
+    ]
+    missing_machines = (
+        list(
+            db.scalars(
+                select(Machine)
+                .where(Machine.user_id == user.id, Machine.id.in_(missing_ids))
+                .order_by(Machine.id)
+                .limit(20)
+            )
+        )
+        if missing_ids
+        else []
+    )
     recovery_query = (
         select(RecoveryRun)
         .join(Machine)
@@ -366,6 +383,21 @@ def overview(user: CurrentUser, db: DbSession, days: Days = 30) -> dict:
             "recoveries": recoveries,
         },
         "cost": costs["total"],
+        "missing_price_machine_count": len(missing_ids),
+        "missing_price_machines": [
+            {
+                "id": machine.id,
+                "name": machine.name,
+                "status": machine.status,
+                "missing_spot_hours": costs["machines"][machine.id][
+                    "missing_spot_hours"
+                ],
+                "missing_on_demand_hours": costs["machines"][machine.id][
+                    "missing_on_demand_hours"
+                ],
+            }
+            for machine in missing_machines
+        ],
         "daily": costs["daily"],
         "recent_events": [
             {

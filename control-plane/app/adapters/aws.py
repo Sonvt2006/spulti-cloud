@@ -197,7 +197,7 @@ class AWSAdapter(CloudAdapter):
 
         ec2 = boto3.client("ec2", region_name=region)
         now = datetime.now(UTC)
-        latest = {}
+        history = {}
         paginator = ec2.get_paginator("describe_spot_price_history")
 
         for i in range(0, len(instance_types), 25):
@@ -208,12 +208,15 @@ class AWSAdapter(CloudAdapter):
                 EndTime=now,
             ):
                 for item in page["SpotPriceHistory"]:
-                    key = (item["InstanceType"], item["AvailabilityZone"])
-                    if (
-                        key not in latest
-                        or item["Timestamp"] > latest[key]["Timestamp"]
-                    ):
-                        latest[key] = item
+                    # Keep every effective price, including the price before
+                    # StartTime. Daily costs need all transitions, not just the
+                    # most recent quote used for placement.
+                    key = (
+                        item["InstanceType"],
+                        item["AvailabilityZone"],
+                        item["Timestamp"],
+                    )
+                    history[key] = item
 
         return [
             SpotPriceQuote(
@@ -224,7 +227,7 @@ class AWSAdapter(CloudAdapter):
                 price_per_hour=Decimal(item["SpotPrice"]),
                 effective_at=item["Timestamp"],
             )
-            for item in latest.values()
+            for item in history.values()
         ]
 
     @staticmethod

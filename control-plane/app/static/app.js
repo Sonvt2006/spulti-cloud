@@ -10,6 +10,7 @@ import {
   provider,
   empty,
   costNote,
+  priceCoverage,
   stats,
   chart,
   machineTable,
@@ -31,6 +32,7 @@ let listSearch = '',
   latestDetail = null,
   lastLoaded = null;
 let finalResult = null;
+let costView = 'cumulative';
 let draft = {},
   candidates = [],
   selected = 0,
@@ -211,10 +213,12 @@ async function render(quiet = false) {
     } else html = empty('Không tìm thấy trang', 'Chọn một trang trong menu.', '<a class="button" href="#/overview">Về tổng quan</a>');
     if (currentEpoch !== epoch || !user) return;
     const expanded = quiet ? [...content().querySelectorAll('details')].map(el => el.open) : [];
+    const summaryFocus = quiet ? [...content().querySelectorAll('details > summary')].indexOf(document.activeElement) : -1;
     content().innerHTML = html;
     if (quiet) content().querySelectorAll('details').forEach((el, i) => {
       el.open = Boolean(expanded[i]);
     });
+    if (summaryFocus >= 0) content().querySelectorAll('details > summary')[summaryFocus]?.focus({preventScroll: true});
     document.querySelector('#last-updated').textContent = lastLoaded ? `Dữ liệu lúc ${date(lastLoaded)}` : 'Đã kết nối API';
     document.title = `${document.querySelector('#breadcrumb').textContent} · Spulti Cloud`;
     if (!quiet) content().focus({
@@ -232,8 +236,8 @@ async function render(quiet = false) {
 function overviewView(data, list) {
   const c = data.counts;
   return heading('Tổng quan workspace', 'Tài nguyên đang chạy và bức tranh chi phí của bạn.', period() + refresh() + createLink()) +
-    stats(data.cost, `<article class="stat"><span>Máy đang quản lý</span><strong>${c.active} <small>máy</small></strong><p>${c.running} đang chạy · ${c.pending} chờ tạo · ${c.recovering} khôi phục</p></article>`) +
-    `<div class="dashboard-grid">${chart(data.daily)}<section class="panel activity-panel"><div class="panel-heading"><div><h2>Hoạt động khôi phục</h2><p>Trong ${days} ngày gần đây</p></div>${icon('clock')}</div><div class="activity-summary"><div><strong>${c.recoveries}</strong><small>Lần khôi phục</small></div><div><strong>${c.needs_attention}</strong><small>Máy cần xử lý</small></div></div>${data.recent_events.length ? data.recent_events.map(e=>`<div class="activity-item">${icon('refresh')}<div><a href="#/machines/${e.machine_id}">Máy #${e.machine_id}</a> · ${esc(e.state)}<p>${esc(e.reason)}<br>${date(e.started_at)}</p></div></div>`).join('') : `<div class="activity-item">${icon('check')}<div><b>Chưa có lần khôi phục nào</b><p>Lịch sử sẽ xuất hiện khi worker xử lý sự cố.</p></div></div>`}</section></div>
+    stats(data.cost, `<article class="stat"><span>Máy đang quản lý</span><strong>${c.active} <small>máy</small></strong><p>${c.running} đang chạy · ${c.pending} chờ tạo · ${c.recovering} khôi phục</p></article>`) + priceCoverage(data) +
+    `<div class="dashboard-grid">${chart(data.daily, {mode: costView, total: data.cost})}<section class="panel activity-panel"><div class="panel-heading"><div><h2>Hoạt động khôi phục</h2><p>Trong ${days} ngày gần đây</p></div>${icon('clock')}</div><div class="activity-summary"><div><strong>${c.recoveries}</strong><small>Lần khôi phục</small></div><div><strong>${c.needs_attention}</strong><small>Máy cần xử lý</small></div></div>${data.recent_events.length ? data.recent_events.map(e=>`<div class="activity-item">${icon('refresh')}<div><a href="#/machines/${e.machine_id}">Máy #${e.machine_id}</a> · ${esc(e.state)}<p>${esc(e.reason)}<br>${date(e.started_at)}</p></div></div>`).join('') : `<div class="activity-item">${icon('check')}<div><b>Chưa có lần khôi phục nào</b><p>Lịch sử sẽ xuất hiện khi worker xử lý sự cố.</p></div></div>`}</section></div>
     <section class="panel"><div class="panel-heading"><div><h2>Máy gần đây <span class="muted">(${list.total})</span></h2><p>Trạng thái đồng bộ từ control-plane</p></div><a href="#/machines">Xem tất cả ${icon('arrow')}</a></div>${machineTable(list.items)}</section>${costNote(data.cost)}`;
 }
 
@@ -270,7 +274,7 @@ function detailView(m, events) {
     ${stats(m.cost)}<p class="muted"><small>Chi phí tích lũy toàn bộ vòng đời, bao gồm các instance trước khi khôi phục.</small></p>
     <div class="detail-grid"><section class="panel"><div class="panel-heading"><h2>Instance hiện tại</h2>${compute?provider(compute.provider):''}</div><div class="panel-body">${compute ? `<dl class="kv"><dt>Loại máy</dt><dd>${esc(compute.machine_type)}</dd><dt>Tài nguyên</dt><dd>${compute.vcpu} vCPU · ${number(compute.ram_gib)} GiB RAM · ${compute.gpu_count} GPU</dd><dt>Vùng / zone</dt><dd>${esc(compute.region)} / ${esc(compute.zone)}</dd><dt>Spot / giờ</dt><dd>${money(compute.spot_price_per_hour,true)}</dd><dt>On-demand / giờ</dt><dd>${money(compute.on_demand_price_per_hour,true)}</dd><dt>Giá Spot ghi nhận</dt><dd>${date(compute.spot_price_recorded_at)}</dd><dt>Public IP</dt><dd>${esc(m.instance?.public_ip||'Chưa có')}</dd><dt>Đồng bộ gần nhất</dt><dd>${date(m.checked_at)}</dd></dl>${ssh?`<div class="code-line"><code>${esc(ssh)}</code><button class="icon-button" data-action="copy-ssh" aria-label="Sao chép lệnh SSH">${icon('copy')}</button></div>`:''}` : '<p class="muted">Chưa có instance đang hoạt động. Theo dõi trạng thái và thông báo của worker.</p>'}</div></section>
     <section class="panel"><div class="panel-heading"><h2>Cấu hình yêu cầu</h2></div><div class="panel-body"><dl class="kv"><dt>CPU tối thiểu</dt><dd>${m.requested_vcpu} vCPU</dd><dt>RAM tối thiểu</dt><dd>${number(m.requested_ram_gib)} GiB</dd><dt>GPU tối thiểu</dt><dd>${m.requested_gpu_count}</dd><dt>Ổ đĩa</dt><dd>${number(m.requested_disk_gib)} GiB</dd><dt>Vùng / zone</dt><dd>${esc(locationSummary({providers: m.requested_providers, regions: m.requested_regions, zones: m.requested_zones, region: m.requested_region, zone: m.requested_zone}))}</dd><dt>Tối ưu</dt><dd>${esc(modes[m.optimization_mode])}</dd></dl><div class="inline-info">Hệ thống có thể chuyển sang cấu hình phù hợp khác khi khôi phục. Máy luôn sử dụng Spot.</div></div></section></div>
-    <div class="page-heading section-gap"><div><h2>Chi phí trong kỳ</h2><p>Spot ${money(m.period_cost.spot_cost)} · On-demand ${money(m.period_cost.on_demand_cost)}</p></div>${period()}</div>${chart(m.daily)}${costNote(m.period_cost)}
+    <div class="page-heading section-gap"><div><h2>Chi phí trong kỳ</h2><p>Spot ${money(m.period_cost.spot_cost)} · On-demand ${money(m.period_cost.on_demand_cost)}</p></div>${period()}</div>${chart(m.daily, {mode: costView, total: m.period_cost})}${costNote(m.period_cost)}
     <section class="panel section-gap"><div class="panel-heading"><h2>Job & checkpoint</h2>${job?`<span class="badge">${esc(job.status)}</span>`:''}</div><div class="panel-body">${job?`<dl class="kv"><dt>Job ID</dt><dd><code>${esc(job.job_id)}</code></dd><dt>Tiến độ agent</dt><dd>${number(job.current_step)} / ${number(job.total_steps)} bước</dd><dt>Checkpoint</dt><dd>Bước ${number(job.checkpoint_step)}</dd><dt>Heartbeat gần nhất</dt><dd>${date(job.last_heartbeat_at)}</dd><dt>Nơi lưu checkpoint</dt><dd>${job.checkpoint?.storage==='s3'?`<code>${esc(`s3://${job.checkpoint.bucket}/${job.checkpoint.key}`)}</code>`:job.checkpoint?'Database (dữ liệu cũ)':'Chưa ghi nhận checkpoint'}</dd></dl><progress class="progress" value="${Number(job.current_step)}" max="${Number(job.total_steps)||1}" aria-label="Tiến độ công việc"></progress>`:'<p class="muted">Máy chưa gắn job. Có thể liên kết job đã tạo bằng CLI khi tạo máy mới.</p>'}</div></section>
     ${resultView(m)}
     <section class="panel section-gap"><div class="panel-heading"><div><h2>Lịch sử instance</h2><p>Mỗi lần khôi phục có thể tạo một instance mới</p></div></div>${m.instances.length?`<div class="table-scroll"><table><thead><tr><th>Instance / loại máy</th><th>Vị trí</th><th>Bắt đầu</th><th>Kết thúc</th><th>Spot</th><th>On-demand</th></tr></thead><tbody>${m.instances.map(i=>`<tr><td>${esc(i.machine_type)}<small class="cell-note">${esc(i.provider_instance_id)}</small></td><td>${provider(i.provider)}<small class="cell-note">${esc(i.zone)}</small></td><td>${date(i.started_at)}</td><td>${i.ended_at?date(i.ended_at):'<span class="badge running">Đang hoạt động</span>'}</td><td>${money(i.cost.spot_cost)}</td><td>${money(i.cost.on_demand_cost)}</td></tr>`).join('')}</tbody></table></div>`:empty('Chưa có instance','Worker sẽ ghi nhận instance sau khi tạo thành công.')}</section>
@@ -748,6 +752,10 @@ app.addEventListener('click', async event => {
   }
 });
 app.addEventListener('change', event => {
+  if (event.target.dataset.control === 'cost-view') {
+    costView = event.target.value;
+    render();
+  }
   if (event.target.dataset.control === 'period') {
     days = Number(event.target.value);
     render();
@@ -807,7 +815,7 @@ setInterval(() => {
   const focused = document.activeElement;
   const pollable = ['/overview', '/machines'].includes(page) || /^\/machines\/\d+$/.test(page);
   if (user && !document.hidden && !routeBusy && !actionBusy && pollable) {
-    if (!focused?.closest('form,details,button,select,a') && !window.getSelection()?.toString() && !document.querySelector('dialog[open]')) render(true);
+    if (!focused?.closest('form,button,select,a') && !window.getSelection()?.toString() && !document.querySelector('dialog[open]')) render(true);
   }
 }, 15000);
 
