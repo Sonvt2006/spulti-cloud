@@ -30,6 +30,7 @@ let listSearch = '',
   listStatus = '',
   latestDetail = null,
   lastLoaded = null;
+let finalResult = null;
 let draft = {},
   candidates = [],
   selected = 0,
@@ -76,6 +77,8 @@ async function api(path, {
     if (response.status === 401 && token) {
       token = '';
       user = null;
+      finalResult = null;
+      latestDetail = null;
       epoch++;
       sessionStorage.removeItem('spulti.session');
       authView();
@@ -173,6 +176,18 @@ async function render(quiet = false) {
       const id = route.split('/')[2];
       const [data, events] = await Promise.all([api(`/api/dashboard/machines/${id}?days=${days}`), api(`/api/machines/${id}/events?limit=10&offset=${eventOffset}`)]);
       if (currentEpoch !== epoch || !user) return;
+      if (data.job?.status === 'COMPLETED') {
+        try {
+          const cached = finalResult?.job_id === data.job.job_id && finalResult.updated_at === data.job.updated_at;
+          const result = cached ? finalResult : await api(`/api/dashboard/jobs/${data.job.job_id}/result`);
+          if (currentEpoch !== epoch || !user) return;
+          finalResult = {...result, updated_at: data.job.updated_at};
+          data.final_result = result;
+        } catch (error) {
+          if (currentEpoch !== epoch || !user) return;
+          data.result_error = error.message;
+        }
+      }
       latestDetail = data;
       html = detailView(data, events);
       lastLoaded = data.as_of;
@@ -226,6 +241,24 @@ function listView(data) {
   return heading('Danh sách máy', `${data.total} máy phù hợp · trạng thái tự cập nhật mỗi 15 giây.`, refresh() + createLink()) + `<section class="panel"><form class="filters" id="filter-form"><label class="search-input">${icon('search')}<input name="search" aria-label="Tìm theo tên máy" placeholder="Tìm theo tên máy…" maxlength="100" value="${esc(listSearch)}"></label><select class="period-select" name="status" aria-label="Lọc trạng thái"><option value="">Tất cả trạng thái</option>${Object.entries(states).map(([key,label])=>`<option value="${key}" ${listStatus===key?'selected':''}>${label}</option>`).join('')}</select><button class="button" type="submit">Lọc</button></form>${machineTable(data.items)}<div class="pagination"><span>${data.total ? `${offset+1}–${Math.min(offset+data.items.length,data.total)}` : '0'} / ${data.total} máy</span><div class="button-row"><button class="button" data-action="prev" ${offset===0?'disabled':''}>Trước</button><button class="button" data-action="next" ${offset+data.items.length>=data.total?'disabled':''}>Sau</button></div></div></section>${costNote()}`;
 }
 
+function resultView(m) {
+  if (!m.job) return '';
+  const result = m.final_result;
+  let body;
+  if (m.result_error) {
+    body = `<div class="inline-error" role="alert">${esc(m.result_error)}</div><button class="button" data-action="refresh">Thử tải lại kết quả</button>`;
+  } else if (result) {
+    const hasState = result.result_json !== null && result.result_json !== '{}';
+    body = `${hasState ? `<pre class="result-json" tabindex="0" aria-label="Kết quả cuối cùng">${esc(result.result_json)}</pre>` : '<p class="muted">Job đã hoàn thành nhưng không có kết quả trong spulti.state. Nội dung print() không được lưu trong checkpoint JSON.</p>'}
+      <p class="muted">Kết quả vẫn có thể tải sau khi instance đã bị xóa.</p>
+      <details class="result-checkpoint"><summary>Xem checkpoint cuối cùng</summary><pre class="result-json" tabindex="0" aria-label="Checkpoint cuối cùng">${esc(result.checkpoint_json)}</pre></details>
+      <p class="muted"><small>File JSON chứa trạng thái và thông tin checkpoint. Nếu job lưu file, JSON chỉ chứa tham chiếu tới bản lưu file.</small></p>`;
+  } else {
+    body = '<p class="muted">Kết quả sẽ xuất hiện khi job hoàn thành và checkpoint cuối cùng được lưu thành công.</p>';
+  }
+  return `<section class="panel section-gap"><div class="panel-heading"><h2>Kết quả cuối cùng</h2>${result ? '<button class="button primary" data-action="download-result">Tải kết quả JSON</button>' : ''}</div><div class="panel-body">${body}</div></section>`;
+}
+
 function detailView(m, events) {
   const compute = m.compute,
     job = m.job;
@@ -239,6 +272,7 @@ function detailView(m, events) {
     <section class="panel"><div class="panel-heading"><h2>Cấu hình yêu cầu</h2></div><div class="panel-body"><dl class="kv"><dt>CPU tối thiểu</dt><dd>${m.requested_vcpu} vCPU</dd><dt>RAM tối thiểu</dt><dd>${number(m.requested_ram_gib)} GiB</dd><dt>GPU tối thiểu</dt><dd>${m.requested_gpu_count}</dd><dt>Ổ đĩa</dt><dd>${number(m.requested_disk_gib)} GiB</dd><dt>Vùng / zone</dt><dd>${esc(locationSummary({providers: m.requested_providers, regions: m.requested_regions, zones: m.requested_zones, region: m.requested_region, zone: m.requested_zone}))}</dd><dt>Tối ưu</dt><dd>${esc(modes[m.optimization_mode])}</dd></dl><div class="inline-info">Hệ thống có thể chuyển sang cấu hình phù hợp khác khi khôi phục. Máy luôn sử dụng Spot.</div></div></section></div>
     <div class="page-heading section-gap"><div><h2>Chi phí trong kỳ</h2><p>Spot ${money(m.period_cost.spot_cost)} · On-demand ${money(m.period_cost.on_demand_cost)}</p></div>${period()}</div>${chart(m.daily)}${costNote(m.period_cost)}
     <section class="panel section-gap"><div class="panel-heading"><h2>Job & checkpoint</h2>${job?`<span class="badge">${esc(job.status)}</span>`:''}</div><div class="panel-body">${job?`<dl class="kv"><dt>Job ID</dt><dd><code>${esc(job.job_id)}</code></dd><dt>Tiến độ agent</dt><dd>${number(job.current_step)} / ${number(job.total_steps)} bước</dd><dt>Checkpoint</dt><dd>Bước ${number(job.checkpoint_step)}</dd><dt>Heartbeat gần nhất</dt><dd>${date(job.last_heartbeat_at)}</dd><dt>Nơi lưu checkpoint</dt><dd>${job.checkpoint?.storage==='s3'?`<code>${esc(`s3://${job.checkpoint.bucket}/${job.checkpoint.key}`)}</code>`:job.checkpoint?'Database (dữ liệu cũ)':'Chưa ghi nhận checkpoint'}</dd></dl><progress class="progress" value="${Number(job.current_step)}" max="${Number(job.total_steps)||1}" aria-label="Tiến độ công việc"></progress>`:'<p class="muted">Máy chưa gắn job. Có thể liên kết job đã tạo bằng CLI khi tạo máy mới.</p>'}</div></section>
+    ${resultView(m)}
     <section class="panel section-gap"><div class="panel-heading"><div><h2>Lịch sử instance</h2><p>Mỗi lần khôi phục có thể tạo một instance mới</p></div></div>${m.instances.length?`<div class="table-scroll"><table><thead><tr><th>Instance / loại máy</th><th>Vị trí</th><th>Bắt đầu</th><th>Kết thúc</th><th>Spot</th><th>On-demand</th></tr></thead><tbody>${m.instances.map(i=>`<tr><td>${esc(i.machine_type)}<small class="cell-note">${esc(i.provider_instance_id)}</small></td><td>${provider(i.provider)}<small class="cell-note">${esc(i.zone)}</small></td><td>${date(i.started_at)}</td><td>${i.ended_at?date(i.ended_at):'<span class="badge running">Đang hoạt động</span>'}</td><td>${money(i.cost.spot_cost)}</td><td>${money(i.cost.on_demand_cost)}</td></tr>`).join('')}</tbody></table></div>`:empty('Chưa có instance','Worker sẽ ghi nhận instance sau khi tạo thành công.')}</section>
     <section class="panel section-gap"><div class="panel-heading"><h2>Lịch sử khôi phục</h2></div>${events.length?`<ul class="event-list">${events.map(e=>`<li>${icon('refresh')}<div><b>${esc(e.state)}</b> · ${esc(e.reason)}<small>${date(e.started_at)}${e.downtime_seconds!=null?` · Gián đoạn ${number(e.downtime_seconds)} giây`:''}${e.last_error?`<br>${esc(e.last_error)}`:''}</small></div></li>`).join('')}</ul>`:empty('Không có sự kiện','Các lần khôi phục được lưu tại đây.')}<div class="pagination"><span>Từ sự kiện ${eventOffset+1}</span><div class="button-row"><button class="button" data-action="events-prev" ${!eventOffset?'disabled':''}>Trước</button><button class="button" data-action="events-next" ${events.length<10?'disabled':''}>Sau</button></div></div></section>${costNote(m.cost)}`;
 }
@@ -622,6 +656,8 @@ app.addEventListener('click', async event => {
   if (action === 'logout') {
     token = '';
     user = null;
+    finalResult = null;
+    latestDetail = null;
     epoch++;
     sessionStorage.removeItem('spulti.session');
     jobFile = null;
@@ -638,6 +674,17 @@ app.addEventListener('click', async event => {
   button.disabled = true;
   try {
     if (action === 'refresh') await render();
+    if (action === 'download-result' && latestDetail?.final_result) {
+      const result = latestDetail.final_result;
+      const url = URL.createObjectURL(new Blob([result.checkpoint_json], {type: 'application/json;charset=utf-8'}));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = result.filename;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
     if (action === 'next' || action === 'prev') {
       offset = Math.max(0, offset + (action === 'next' ? 20 : -20));
       await render();

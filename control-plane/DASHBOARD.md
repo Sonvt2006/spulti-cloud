@@ -15,6 +15,8 @@ hiện tại, không cần Node.js, một web server khác hoặc một database
 - Chi tiết máy: tài nguyên yêu cầu/thực tế, IP và lệnh SSH, giá, lịch sử instance,
   lịch sử recovery, job, heartbeat và vị trí checkpoint trên S3. Có thao tác xóa
   và thử lại qua Instance Manager hiện có.
+- Kết quả cuối cùng: hiển thị `workload_state` sau khi job hoàn thành, xem toàn bộ
+  checkpoint và tải file `job-<job_id>-final.json`, kể cả khi instance đã bị xóa.
 - Tạo máy qua ba bước: nhập nhu cầu → chọn đề xuất → xác nhận. Hỗ trợ CPU/RAM/GPU,
   disk, provider, region/zone, mục tiêu tối ưu, job ID và startup script tùy chọn.
   Ước tính số giờ trên form chỉ để so sánh, không phải lịch tự dừng máy.
@@ -48,7 +50,8 @@ flowchart LR
 Dashboard dùng các API auth/SSH/machines hiện có; API dashboard cung cấp mô hình
 đọc tổng hợp, tính chi phí và đăng ký managed job. Tất cả `/api/dashboard*` đều bắt buộc đăng nhập và
 lọc theo chủ sở hữu. Trình duyệt không nhận AWS credentials, launch network config,
-agent token, nội dung script đang chạy hoặc dữ liệu checkpoint nhúng.
+agent token hoặc nội dung script đang chạy. Endpoint kết quả riêng chỉ trả
+checkpoint cuối cho chủ sở hữu job.
 
 | Thành phần đã đọc | Trách nhiệm và cách tích hợp |
 | --- | --- |
@@ -59,7 +62,7 @@ agent token, nội dung script đang chạy hoặc dữ liệu checkpoint nhúng
 | `app/services/recovery.py`, `managed_agent.py` | Khôi phục từ yêu cầu ban đầu; không khóa recovery vào ứng viên ưu tiên |
 | `app/adapters/{base,aws,gcp,cloud_init}.py` và script bootstrap/kiểm tra adapter | Cloud adapters tạo/xóa VM và cấu hình agent; dashboard không gọi trực tiếp |
 | `app/services/market_data_collector.py`, `tasks.py`, `celery_app.py` | Giữ collector Spot/risk; thêm collector On-demand AWS hằng ngày |
-| `app/agent_api.py`, `submissions.py`, `checkpoint_storage.py` | Dùng thông tin job thuộc người dùng; hiển thị metadata checkpoint, không tải payload/credentials |
+| `app/agent_api.py`, `submissions.py`, `checkpoint_storage.py` | Hiển thị metadata checkpoint và tải checkpoint cuối để chủ sở hữu xem/xuất kết quả |
 | Toàn bộ `node-agent/` | Agent chạy job/script, heartbeat, checkpoint và xử lý interruption; dashboard phản ánh trạng thái đã báo về |
 | Toàn bộ `cli/` | Giữ tương thích API với CLI, bao gồm job/submission và Idempotency-Key |
 | Test của control-plane, CLI, node-agent; Docker/Compose/Nginx, tài liệu Markdown và hai PDF dự án | Đối chiếu luồng thực tế trước khi viết; không thay mô hình EC2–RDS–S3 |
@@ -129,6 +132,42 @@ URL/hash sau thay đổi `managed.py` để VM mới nhận hỗ trợ này.
 `http://localhost:8080/dashboard/` (hoặc `http://localhost:8000/dashboard/` nếu chạy
 uvicorn trực tiếp). Giao diện dùng API cùng origin, không cần CORS hoặc URL API
 riêng trong JavaScript.
+
+## Xem và tải kết quả cuối cùng
+
+Mở **Danh sách máy → chọn máy → Kết quả cuối cùng**. Khi job đã `COMPLETED` và
+checkpoint cuối được lưu đủ số bước, dashboard hiển thị `workload_state`, cho
+phép mở **Xem checkpoint cuối cùng** và bấm **Tải kết quả JSON**.
+Máy đã xóa vẫn có trang chi tiết và tải được kết quả từ checkpoint lưu trên S3
+(hoặc database với checkpoint cũ), không cần kết nối tới instance.
+
+Chương trình phải lưu kết quả JSON vào `spulti.state`, ví dụ:
+
+```python
+from spulti import state, step_number
+
+state["running_sum"] = state.get("running_sum", 0) + step_number**2
+```
+
+File tải về tên `job-<job_id>-final.json`, chứa toàn bộ checkpoint, bao gồm
+`job_id`, `status`, `total_steps`, `last_completed_step` và `workload_state` nếu
+có. Số nguyên lớn được giữ nguyên khi hiển thị và tải xuống. `print()` không được
+thu thập thành kết quả; nếu job chỉ in ra log thì UI giải thích không có state,
+nhưng vẫn tải được checkpoint. Nếu có `file_snapshot`, JSON giữ tham chiếu tới
+bản lưu file; file model/dataset không được nhúng vào JSON.
+
+API có xác thực bằng Bearer token của chủ sở hữu:
+
+- `GET /api/dashboard/jobs/{job_id}/result`: nội dung kết quả và checkpoint dạng
+  chuỗi JSON (`result_json`, `checkpoint_json`), cùng `filename`.
+- Thêm `?download=true` để nhận trực tiếp checkpoint JSON với
+  `Content-Disposition: attachment`.
+- Job chưa xong trả `409`; thiếu checkpoint trả `404`; lỗi đọc/kiểm tra checkpoint
+  trả `503` và dashboard có nút thử lại. Job không thuộc tài khoản trả `404`.
+
+Tính năng này chỉ cần cập nhật image API/dashboard; không cần migration database
+hay phát hành lại node-agent. Kết quả đã tải được giữ trong bộ nhớ của tab theo
+job và thời điểm cập nhật, xóa khi đăng xuất; không lưu vào local/session storage.
 
 ## Dữ liệu On-demand
 

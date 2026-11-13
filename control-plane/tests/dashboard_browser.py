@@ -26,6 +26,7 @@ from app.models import (  # noqa: E402
     AgentJob,
     Instance,
     InstanceAttempt,
+    Machine,
     MachineJob,
     MachineLifecycle,
     RecoveryRun,
@@ -187,9 +188,65 @@ def run_browser(base_url, factory, output):
         expect(page.locator("#content")).to_contain_text(
             "s3://spulti-checkpoints-preview/"
         )
+        expect(page.get_by_role("button", name="Tải kết quả JSON")).to_have_count(0)
+        expect(page.locator("#content")).to_contain_text(
+            "Kết quả sẽ xuất hiện khi job hoàn thành"
+        )
+        machine_id = int(page.url.rsplit("/", 1)[1])
+        with factory() as db:
+            binding = db.get(MachineJob, machine_id)
+            job = db.get(AgentJob, binding.job_id)
+            job.status = "COMPLETED"
+            job.current_step = job.checkpoint_step = job.total_steps
+            checkpoint = {
+                "version": 3,
+                "job_id": job.id,
+                "total_steps": job.total_steps,
+                "last_completed_step": job.total_steps,
+                "status": "COMPLETED",
+                "workload": "python_script",
+                "source_sha256": "a" * 64,
+                "workload_state": {
+                    "running_sum": 9007199254740993,
+                    "message": '<img src=x onerror="window.resultInjected=true">',
+                },
+            }
+            job.checkpoint_data = checkpoint
+            db.get(Machine, machine_id).status = "DELETED"
+            db.commit()
+        page.route(
+            "**/api/dashboard/jobs/*/result",
+            lambda route: route.fulfill(
+                status=503,
+                content_type="application/json",
+                body=json.dumps({"detail": "Chưa đọc được checkpoint cuối cùng."}),
+            ),
+        )
+        page.reload()
+        expect(page.get_by_role("heading", name="Job & checkpoint")).to_be_visible()
+        expect(page.get_by_role("button", name="Thử tải lại kết quả")).to_be_visible()
+        page.unroute("**/api/dashboard/jobs/*/result")
+        page.get_by_role("button", name="Thử tải lại kết quả").click()
+        expect(page.get_by_label("Kết quả cuối cùng", exact=True)).to_contain_text(
+            "9007199254740993"
+        )
+        assert page.locator(".result-json img").count() == 0
+        assert page.evaluate("window.resultInjected === undefined")
+        with page.expect_download() as download_info:
+            page.get_by_role("button", name="Tải kết quả JSON").click()
+        download = download_info.value
+        assert download.suggested_filename == f"job-{checkpoint['job_id']}-final.json"
+        assert (
+            json.loads(Path(download.path()).read_text(encoding="utf-8")) == checkpoint
+        )
+        page.get_by_text("Xem checkpoint cuối cùng", exact=True).click()
+        expect(page.get_by_label("Checkpoint cuối cùng", exact=True)).to_contain_text(
+            checkpoint["job_id"]
+        )
         page.screenshot(path=str(output / "machine-detail-desktop.png"), full_page=True)
         page.set_viewport_size({"width": 390, "height": 844})
         page.screenshot(path=str(output / "machine-detail-mobile.png"), full_page=True)
+        expect(page.get_by_role("button", name="Tải kết quả JSON")).to_be_visible()
         assert page.evaluate(
             "document.documentElement.scrollWidth <= innerWidth"
         ), "Mobile overflow"
@@ -461,7 +518,8 @@ def run_browser(base_url, factory, output):
     )
     print(
         "preferred candidate, lost-response idempotency, delete, SSH keys, "
-        "upload, job retry after lost response, job prerequisites, errors, expiry, CSP."
+        "upload, job retry after lost response, job prerequisites, final results, "
+        "JSON download, errors, expiry, CSP."
     )
 
 

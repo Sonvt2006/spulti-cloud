@@ -1352,6 +1352,24 @@ tr:last-child td {
   margin-top: 22px
 }
 
+.result-json {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 16px;
+  border: 1px solid #e0e8d8;
+  border-radius: 7px;
+  background: #f8faf5;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.result-checkpoint summary {
+  cursor: pointer;
+  padding: 12px 0;
+}
+
 .progress {
   width: 100%;
   height: 7px;

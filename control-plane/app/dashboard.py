@@ -1,14 +1,16 @@
 """Owner-scoped dashboard views and managed job submissions."""
 
 import hashlib
+import json
 import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from app.agent_api import get_job
+from app.agent_api import CheckpointPayload, _job_for_owner, get_job
 from app.auth import CurrentUser, DbSession
+from app.checkpoint_storage import S3CheckpointStore
 from app.machines import _wake_worker, machine_response
 from app.models import (
     AgentJob,
@@ -33,7 +35,9 @@ from app.services.instance_manager import (
 from app.services.launch_config import load_launch_profiles
 from app.services.managed_agent import agent_settings
 from app.services.placement import PlacementRequest
-from fastapi import APIRouter, Header, HTTPException, Query
+from botocore.exceptions import BotoCoreError, ClientError
+from fastapi import APIRouter, Header, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from pydantic import Field, model_validator
 from sqlalchemy import func, or_, select
 
@@ -43,6 +47,63 @@ MANAGED_JOB_CONFIGURATION_ERROR = (
     "Chạy job tự động chưa sẵn sàng: cần URL HTTPS cho API và bản phát hành "
     "agent có SHA256 hợp lệ. Bạn vẫn có thể tạo máy và SSH để chạy file."
 )
+
+
+@router.get("/jobs/{job_id}/result")
+def job_result(
+    job_id: UUID, user: CurrentUser, db: DbSession, download: bool = False
+) -> Response:
+    job = _job_for_owner(db, str(job_id), user.id)
+    if job.status != "COMPLETED" or job.checkpoint_step != job.total_steps:
+        raise HTTPException(409, "Job chưa hoàn thành; chưa có kết quả cuối cùng.")
+    reference = job.checkpoint_data
+    if not reference:
+        raise HTTPException(404, "Job chưa có checkpoint cuối cùng.")
+    try:
+        checkpoint = (
+            S3CheckpointStore().load(reference)
+            if reference.get("storage") == "s3"
+            else reference
+        )
+        payload = CheckpointPayload.model_validate(checkpoint)
+        if (
+            payload.job_id != job.id
+            or payload.total_steps != job.total_steps
+            or payload.last_completed_step != job.total_steps
+            or payload.status != "COMPLETED"
+        ):
+            raise ValueError("Final checkpoint does not match job")
+        checkpoint_json = json.dumps(checkpoint, ensure_ascii=False, indent=2) + "\n"
+        result_json = (
+            json.dumps(payload.workload_state, ensure_ascii=False, indent=2)
+            if payload.workload_state is not None
+            else None
+        )
+    except (BotoCoreError, ClientError, RuntimeError, ValueError, TypeError):
+        raise HTTPException(
+            503, "Chưa đọc được checkpoint cuối cùng. Vui lòng thử lại."
+        ) from None
+    filename = f"job-{job.id}-final.json"
+    headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+    if download:
+        return Response(
+            checkpoint_json,
+            media_type="application/json",
+            headers={
+                **headers,
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+    # JSON text preserves large integers exactly when displayed/downloaded in JS.
+    return JSONResponse(
+        {
+            "job_id": job.id,
+            "filename": filename,
+            "result_json": result_json,
+            "checkpoint_json": checkpoint_json,
+        },
+        headers=headers,
+    )
 
 
 def period_start(now: datetime, days: int) -> datetime:
