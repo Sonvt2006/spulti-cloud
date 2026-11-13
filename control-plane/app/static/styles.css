@@ -949,6 +949,12 @@ tr:last-child td {
   line-height: 1.5
 }
 
+.field select:disabled {
+  background: #f4f6f3;
+  color: #7c8d7e;
+  cursor: not-allowed
+}
+
 .field textarea {
   resize: vertical;
   min-height: 110px;

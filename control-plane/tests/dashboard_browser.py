@@ -199,6 +199,46 @@ def run_browser(base_url, factory, output):
             page.get_by_role("heading", name="Bạn cần bao nhiêu tài nguyên?")
         ).to_be_visible()
         page.get_by_label("Tên máy", exact=True).fill("browser-created")
+        provider = page.locator('#requirements-form select[name="provider"]')
+        region = page.locator('#requirements-form select[name="region"]')
+        zone = page.locator('#requirements-form select[name="zone"]')
+        expect(region).to_be_disabled()
+        expect(zone).to_be_disabled()
+        for cloud, cloud_region, cloud_zone in (
+            ("AWS", "ap-southeast-1", "ap-southeast-1a"),
+            ("GCP", "asia-southeast1", "asia-southeast1-b"),
+        ):
+            provider.select_option(cloud)
+            expect(region).to_be_enabled()
+            expect(region).to_have_value("")
+            expect(zone).to_be_disabled()
+            expect(zone).to_have_value("")
+            assert region.locator("option").evaluate_all(
+                "options => options.map(option => option.value)"
+            ) == ["", cloud_region]
+            region.select_option(cloud_region)
+            expect(zone).to_be_enabled()
+            assert zone.locator("option").evaluate_all(
+                "options => options.map(option => option.value)"
+            ) == ["", cloud_zone]
+            zone.select_option(cloud_zone)
+            region.select_option("")
+            expect(zone).to_be_disabled()
+            expect(zone).to_have_value("")
+            region.select_option(cloud_region)
+            zone.select_option(cloud_zone)
+        page.get_by_role("button", name="Tìm máy phù hợp").click()
+        expect(page.locator(".candidate")).to_have_count(1)
+        page.get_by_role("button", name="Sửa nhu cầu").click()
+        expect(provider).to_have_value("GCP")
+        expect(region).to_have_value("asia-southeast1")
+        expect(zone).to_have_value("asia-southeast1-b")
+        expect(zone).to_be_enabled()
+        provider.select_option("")
+        expect(region).to_be_disabled()
+        expect(region).to_have_value("")
+        expect(zone).to_be_disabled()
+        expect(zone).to_have_value("")
         page.get_by_role("button", name="Tìm máy phù hợp").click()
         expect(page.locator(".candidate")).to_have_count(2)
         page.locator(".candidate").filter(has_text="e2-standard-4").click()

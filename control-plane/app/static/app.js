@@ -259,8 +259,21 @@ function createView() {
   return heading('Tạo máy mới', 'Bắt đầu từ nhu cầu, tìm cấu hình phù hợp.') + `<ol class="steps">${['Nhu cầu tài nguyên','Chọn đề xuất','Xác nhận tạo máy'].map((label,i)=>`<li class="${step===i+1?'active':''}" ${step===i+1?'aria-current="step"':''}><span>${i+1}</span>${label}</li>`).join('')}</ol><div class="create-grid"><div>${step===1?requirementsView():step===2?recommendationsView():reviewView()}</div>${side}</div>`;
 }
 
+function locationOptions(provider, region = '', zone = '') {
+  const providerLocations = locations.filter(l => l.provider === provider);
+  const regions = [...new Set(providerLocations.map(l => l.region))];
+  const selectedRegion = regions.includes(region) ? region : '';
+  const zones = providerLocations.filter(l => selectedRegion && l.region === selectedRegion);
+  return {
+    regionDisabled: !provider,
+    zoneDisabled: !selectedRegion,
+    regions: `<option value="">${provider ? 'Tất cả vùng đã cấu hình' : 'Chọn nhà cung cấp trước'}</option>${regions.map(r => `<option value="${esc(r)}" ${selectedRegion === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}`,
+    zones: `<option value="">${selectedRegion ? 'Tự động trong khu vực đã chọn' : 'Chọn khu vực trước'}</option>${zones.map(l => `<option value="${esc(l.zone)}" ${zone === l.zone ? 'selected' : ''}>${esc(l.provider)} · ${esc(l.zone)}</option>`).join('')}`
+  };
+}
+
 function requirementsView() {
-  const uniqueRegions = [...new Set(locations.map(l => l.region))];
+  const options = locationOptions(draft.provider, draft.region, draft.zone);
   return `<form class="panel form-panel" id="requirements-form"><h2>Bạn cần bao nhiêu tài nguyên?</h2><p>CPU, RAM và GPU là mức tối thiểu cho mỗi máy.</p>${!locations.length?'<div class="inline-info">Chưa có cấu hình launch. Quản trị viên cần cấu hình vùng, image và mạng cho worker.</div>':''}<div class="form-grid">
     ${field('Tên máy','name',draft.name||'','required maxlength="100" placeholder="Ví dụ: training-worker-01" class="full"')}
     ${field('Ổ đĩa (GiB)','disk_size_gb',draft.disk_size_gb??30,'type="number" required min="1" max="65536" step="1"')}
@@ -269,8 +282,8 @@ function requirementsView() {
     ${field('Số GPU tối thiểu','gpu_count',draft.gpu_count??0,'type="number" required min="0" step="1"','Catalog hiện chưa hỗ trợ chọn model GPU.')}
     ${field('Số giờ dự kiến để so sánh','hours',draft.hours??24,'type="number" required min="1" max="8760" step="1"','Chỉ dùng để ước tính, không tự động dừng máy.')}
     <label class="field"><span>Nhà cung cấp</span><select name="provider"><option value="">Tự động · AWS & GCP</option>${['AWS','GCP'].map(p=>`<option ${draft.provider===p?'selected':''}>${p}</option>`).join('')}</select></label>
-    <label class="field"><span>Khu vực</span><select name="region"><option value="">Tất cả vùng đã cấu hình</option><option value="singapore" ${draft.region==='singapore'?'selected':''}>Singapore · AWS & GCP</option>${uniqueRegions.map(r=>`<option value="${esc(r)}" ${draft.region===r?'selected':''}>${esc(r)}</option>`).join('')}</select></label>
-    <label class="field full"><span>Availability zone</span><select name="zone"><option value="">Tự động theo nhà cung cấp và vùng</option>${locations.map(l=>`<option value="${esc(l.zone)}" ${draft.zone===l.zone?'selected':''}>${esc(l.provider)} · ${esc(l.zone)}</option>`).join('')}</select></label></div>
+    <label class="field"><span>Khu vực</span><select name="region" ${options.regionDisabled?'disabled':''}>${options.regions}</select></label>
+    <label class="field full"><span>Availability zone</span><select name="zone" ${options.zoneDisabled?'disabled':''}>${options.zones}</select></label></div>
     <div class="form-section"><h3>Mục tiêu tối ưu</h3><div class="mode-options">${Object.entries(modes).map(([key,label])=>`<label class="mode-option"><input type="radio" name="optimization_mode" value="${key}" ${(draft.optimization_mode||'BALANCED')===key?'checked':''}>${label}<small>${{SAVING:'Ưu tiên giá, lọc rủi ro cao',BALANCED:'Cân đối giá và rủi ro',STABLE:'Ưu tiên chỉ số rủi ro thấp'}[key]}</small></label>`).join('')}</div></div>
     <details class="form-section" ${draft.job_id||draft.startup_script?'open':''}><summary>Tùy chọn nâng cao · job và startup script</summary><div class="form-grid">${field('Job ID đã tạo bằng CLI (không bắt buộc)','job_id',draft.job_id||'','class="full" placeholder="UUID của job thuộc tài khoản này"','Startup script tùy chọn chạy trước khi cài managed agent.')}<label class="field full"><span>Startup script (không bắt buộc)</span><textarea name="startup_script" maxlength="8000" placeholder="#!/bin/bash">${esc(draft.startup_script||'')}</textarea><small>Script chạy trên máy mới; phải bắt đầu bằng shebang. Không nhập khóa truy cập cloud.</small></label></div></details><div id="form-error" role="alert"></div><div class="form-actions"><a href="#/machines">Hủy</a><button type="submit" class="button primary" ${!locations.length?'disabled':''}>Tìm máy phù hợp ${icon('arrow')}</button></div></form>`;
 }
@@ -664,14 +677,13 @@ app.addEventListener('change', event => {
     event.target.value = '';
   }
   if (['provider', 'region'].includes(event.target.name) && event.target.form?.id === 'requirements-form') {
-    const form = event.target.form,
-      p = form.elements.provider.value,
-      r = form.elements.region.value;
-    [...form.elements.zone.options].forEach(option => {
-      const loc = locations.find(l => l.zone === option.value);
-      option.hidden = Boolean(loc && ((p && p !== loc.provider) || (r && r !== 'singapore' && r !== loc.region) || (r === 'singapore' && !['ap-southeast-1', 'asia-southeast1'].includes(loc.region))));
-    });
-    if (form.elements.zone.selectedOptions[0]?.hidden) form.elements.zone.value = '';
+    const form = event.target.form;
+    const options = locationOptions(form.elements.provider.value,
+      event.target.name === 'provider' ? '' : form.elements.region.value);
+    form.elements.region.innerHTML = options.regions;
+    form.elements.region.disabled = options.regionDisabled;
+    form.elements.zone.innerHTML = options.zones;
+    form.elements.zone.disabled = options.zoneDisabled;
   }
 });
 window.addEventListener('hashchange', () => render());
