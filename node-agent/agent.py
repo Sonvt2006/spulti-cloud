@@ -11,6 +11,10 @@ from job_runner import run_job
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     try:
+        if argv and argv[0] == "run":
+            from local_run import main as local_main
+
+            return local_main(argv[1:])
         if argv and argv[0] == "daemon":
             from node_daemon import main as daemon_main
 

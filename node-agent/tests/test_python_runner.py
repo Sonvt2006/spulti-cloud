@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from checkpoint import CheckpointStore  # noqa: E402
 from config import AgentConfig  # noqa: E402
 from control_plane import RemoteError, RetryableRemoteError  # noqa: E402
-from interruption import InterruptionNotice  # noqa: E402
+from interruption import InterruptionNotice, StopRequest  # noqa: E402
 from job_runner import run_job  # noqa: E402
 from program import ProgramError, PythonProgram  # noqa: E402
 
@@ -34,6 +34,11 @@ class PythonRunnerTests(unittest.TestCase):
             step_delay=0,
             state_dir=self.root,
         )
+
+    def test_existing_torch_job_cannot_advance_without_saving_next_epoch(self):
+        program = PythonProgram("pass", "forgotten.py", 3)
+        with self.assertRaises(ProgramError):
+            program.run(2, {"_spulti_torch": {"epoch": 1}}, StopRequest(15))
 
     def test_long_step_sends_periodic_heartbeat_before_step_finishes(self):
         program = PythonProgram("import time\ntime.sleep(0.2)\n", "slow.py", 1)

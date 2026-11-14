@@ -126,13 +126,9 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
     files = None
     files_ready = False
     if config.checkpoint_dir is not None:
-        if remote is None:
-            raise ValueError(
-                "File checkpoint sync requires Control Plane URL and token"
-            )
         root = Path(config.checkpoint_dir).absolute() / config.job_id
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        files = FileCheckpointSync(root, remote)
+        files = FileCheckpointSync(root, remote) if remote else None
         if program:
             program.checkpoint_dir = root
     interval = config.file_sync_seconds if files else config.checkpoint_seconds
@@ -342,7 +338,10 @@ def run_job(config: AgentConfig, *, program: PythonProgram | None = None) -> int
                         flush=True,
                     )
                     return 0
-                if config.checkpoint_every > 0 and step % config.checkpoint_every == 0:
+                epoch_checkpoint = program is not None and "_spulti_torch" in state
+                if epoch_checkpoint or (
+                    config.checkpoint_every > 0 and step % config.checkpoint_every == 0
+                ):
                     checkpoint_now(step, "RUNNING")
                     persisted = step
                     print(

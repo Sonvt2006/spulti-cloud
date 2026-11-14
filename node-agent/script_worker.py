@@ -21,6 +21,13 @@ def main() -> None:
     except SystemExit as exc:
         if exc.code is not None and exc.code != 0:
             raise
+    if spulti._torch_checkpoint_required or "_spulti_torch" in spulti.state:
+        reference = spulti.state.get("_spulti_torch", {})
+        if reference.get("epoch") != spulti.step_number:
+            raise RuntimeError(
+                "Epoch finished without TorchCheckpoint.save(); "
+                "progress was not committed"
+            )
     Path(result).write_text(spulti.encode_state(spulti.state), encoding="utf-8")
 
 

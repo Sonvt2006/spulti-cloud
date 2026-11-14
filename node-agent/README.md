@@ -1,5 +1,9 @@
 # Spulti-cloud Node Agent — checkpoint/resume và phát hiện thu hồi
 
+**PyTorch (mỗi lần chạy file = một epoch):** xem [PYTORCH.md](PYTORCH.md)
+và [ví dụ training CPU](examples/torch_regression.py). Helper `TorchCheckpoint`
+lưu/nạp model, optimizer, scheduler và RNG, đồng bộ sau mỗi epoch thành công.
+
 VM do Instance Manager tạo luôn chạy `spulti-node-agent.service` (`agent.py daemon`)
 để gửi heartbeat mỗi 20 giây và theo dõi thu hồi, kể cả khi không có job.
 Managed job chạy riêng trong `spulti-job-agent.service`; khi job hoàn thành và

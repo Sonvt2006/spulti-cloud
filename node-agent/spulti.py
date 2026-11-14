@@ -11,6 +11,7 @@ MAX_STATE_BYTES = 8 * 1024
 step_number: int = 0  # 1-based; initialized by script_worker before user code.
 total_steps: int = 0
 state: dict = {}
+_torch_checkpoint_required = False  # Set by the optional epoch checkpoint helper.
 
 
 def encode_state(value: dict) -> str:

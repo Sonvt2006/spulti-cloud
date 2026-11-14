@@ -22,11 +22,13 @@ RUNTIME_FILES = (
     "heartbeat.py",
     "interruption.py",
     "job_runner.py",
+    "local_run.py",
     "managed.py",
     "node_daemon.py",
     "program.py",
     "script_worker.py",
     "spulti.py",
+    "spulti_torch.py",
     "submission.py",
 )
 
@@ -41,7 +43,7 @@ def build_release(output_dir: Path) -> tuple[Path, str]:
         stage = Path(directory)
         for name, data in files.items():
             (stage / name).write_bytes(data)
-        for command in ([], ["daemon"], ["managed"], ["submit"], ["resume"]):
+        for command in ([], ["run"], ["daemon"], ["managed"], ["submit"], ["resume"]):
             subprocess.run(
                 [
                     sys.executable,
