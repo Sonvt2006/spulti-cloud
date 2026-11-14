@@ -28,6 +28,7 @@ _SHARED_CPUS = {
 
 
 def aws_on_demand_prices(client, region: str, names: set[str], *, now=None):
+    """Return unambiguous latest rates without one type blocking the others."""
     now = now or datetime.now(UTC)
     filters = {
         "productFamily": "Compute Instance",
@@ -36,8 +37,10 @@ def aws_on_demand_prices(client, region: str, names: set[str], *, now=None):
         "tenancy": "Shared",
         "preInstalledSw": "NA",
         "capacitystatus": "Used",
+        "marketoption": "OnDemand",
+        "operation": "RunInstances",
     }
-    quotes = {}
+    rates = {}
     if not names:
         return []
     for page in client.get_paginator("get_products").paginate(
@@ -71,26 +74,47 @@ def aws_on_demand_prices(client, region: str, names: set[str], *, now=None):
                     price = Decimal(dimension["pricePerUnit"]["USD"])
                     if not price.is_finite() or price < 0:
                         raise ValueError("Invalid AWS list price")
-                    previous = quotes.get(name)
-                    if (
-                        previous
-                        and previous.effective_at == effective
-                        and previous.price_per_hour != price
-                    ):
-                        raise ValueError(
-                            f"Ambiguous AWS list price for {name} in {region}"
-                        )
-                    if previous is None or effective > previous.effective_at:
-                        quotes[name] = SpotPriceQuote(
-                            "AWS", name, region, None, price, effective, "ON_DEMAND"
-                        )
-    return list(quotes.values())
+                    previous = rates.get(name)
+                    if previous is None or effective > previous[0]:
+                        rates[name] = (effective, {price})
+                    elif effective == previous[0]:
+                        previous[1].add(price)
+    quotes = []
+    # Resolve after all pages: a conflict in an older version must not hide a
+    # newer valid rate, and a later duplicate must not restore a conflicting rate.
+    for name, (effective, prices) in rates.items():
+        if len(prices) != 1:
+            logger.warning(
+                "Skipping ambiguous AWS On-demand price for %s in %s at %s: %s",
+                name,
+                region,
+                effective.isoformat(),
+                sorted(prices),
+            )
+            continue
+        price = next(iter(prices))
+        if price == 0:
+            logger.warning(
+                "Skipping zero AWS On-demand compute price for %s in %s",
+                name,
+                region,
+            )
+            continue
+        quotes.append(
+            SpotPriceQuote("AWS", name, region, None, price, effective, "ON_DEMAND")
+        )
+    return quotes
 
 
 def collect_aws_on_demand(regions: list[str], limit_types: int | None = None) -> dict:
     names = set(_known_types("AWS", limit_types))
     if not names:
-        return {"status": "empty", "prices_saved": 0}
+        return {
+            "status": "empty",
+            "prices_saved": 0,
+            "prices_received": 0,
+            "prices_missing": 0,
+        }
     client = boto3.client(
         "pricing",
         region_name="us-east-1",
@@ -100,16 +124,20 @@ def collect_aws_on_demand(regions: list[str], limit_types: int | None = None) ->
             retries={"mode": "standard", "total_max_attempts": 3},
         ),
     )
-    saved = received = 0
+    saved = received = missing = 0
     for region in regions:
         prices = aws_on_demand_prices(client, region, names)
         result = save_market_data(MarketData(prices=prices, risks=[]))
         saved += result["prices_saved"]
         received += result["prices_received"]
+        missing += len(names) - len(prices)
+    if missing:
+        logger.warning("AWS On-demand: missing %d regional prices", missing)
     return {
-        "status": "ok" if received else "empty",
+        "status": "empty" if not received else "partial" if missing else "ok",
         "prices_saved": saved,
         "prices_received": received,
+        "prices_missing": missing,
     }
 
 

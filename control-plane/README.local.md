@@ -604,6 +604,12 @@ hoặc `GET /api/tasks/{task_id}` trong Swagger sau đăng nhập. Kiểm tra k�
 `prices_saved`/`risks_saved`, không chỉ `status: SUCCESS`: kết quả `empty` có thể
 do catalog trống; số bản ghi mới bằng 0 cũng có thể vì đã thu thập trước đó.
 
+AWS On-demand lọc `marketoption=OnDemand` / `operation=RunInstances` để thu đúng
+giá compute Linux thông thường. Nếu một loại máy còn xung đột giá ở mốc hiệu lực
+mới nhất, collector ghi warning và bỏ riêng loại đó; các giá hợp lệ khác vẫn
+được lưu. Kết quả `partial` và `prices_missing` báo số cặp loại máy/region thiếu
+giá. Không tự chọn một trong các giá xung đột hoặc xem giá thiếu là 0.
+
 Collector AWS On-demand cần `pricing:GetProducts`; collector Spot/catalog cần
 các quyền EC2 đọc tương ứng; GCP cần quyền đọc catalog và capacity history mà
 adapter sử dụng. Tài khoản có credentials nhưng thiếu quyền vẫn không lấy được

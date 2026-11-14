@@ -174,11 +174,20 @@ job và thời điểm cập nhật, xóa khi đăng xuất; không lưu vào lo
 ## Dữ liệu On-demand
 
 Worker gọi AWS Price List Query API cho **Linux / Shared tenancy / không phần mềm
-cài sẵn**, lọc đúng `regionCode`, lấy USD/giờ từ điều khoản OnDemand. Client Pricing
+cài sẵn**, lọc đúng `regionCode`, `marketoption=OnDemand` và
+`operation=RunInstances`, lấy USD/giờ từ điều khoản OnDemand. Client Pricing
 dùng endpoint `us-east-1`; giá vẫn thuộc region được yêu cầu. API có phân trang;
 giữ thời điểm `effectiveDate` thay vì giả định giá có hiệu lực từ lúc thu thập.
 Xem [AWS GetProducts](https://docs.aws.amazon.com/boto3/latest/reference/services/pricing/client/get_products.html)
 và [Price List Query API](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/using-price-list-query-api.html).
+
+Collector bỏ giá bằng 0 và chỉ nhận một mức giá duy nhất tại thời điểm hiệu lực
+mới nhất sau khi đọc hết các trang. Nếu một loại máy, ví dụ `p5en.48xlarge`, vẫn
+có nhiều giá khác nhau ở mốc mới nhất, collector ghi warning và bỏ riêng loại đó;
+các loại máy khác vẫn được lưu. Không chọn giá thấp/cao nhất hoặc dùng lại mốc
+cũ để che xung đột. Kết quả `partial` kèm `prices_missing` báo thiếu giá một phần;
+`empty` nghĩa là không nhận được giá hợp lệ. Lọc `marketoption=OnDemand` cũng
+được dùng trong [collector của AWS Karpenter](https://github.com/aws/karpenter-provider-aws/blob/main/pkg/providers/pricing/pricing.go).
 
 Role/profile được worker sử dụng cần thêm quyền **`pricing:GetProducts`**.
 Collector dùng chuỗi credentials chuẩn của boto3, không nhận khóa từ dashboard.
@@ -273,6 +282,13 @@ chi phí = tổng (số giây instance chạy trong khoảng × đơn giá/giờ
 - Giá hiện tại tiếp tục dùng bản ghi gần nhất có hiệu lực như placement hiện có;
   chưa áp dụng thời hạn hết hiệu lực cho dữ liệu market. UI hiển thị thời điểm
   giá để người dùng đánh giá độ mới. Collector phải được giám sát vận hành.
+- **Giá Spot/On-demand có hiệu lực từ** là thời điểm nhà cung cấp bắt đầu áp dụng
+  đơn giá, không phải lần collector chạy gần nhất. Với GCP Spot, thời điểm này
+  lấy từ `priceHistory[].interval.startTime`. Nếu API tiếp tục trả cùng giá và
+  thời điểm hiệu lực, collector loại trùng nên ngày hiển thị có thể giữ nguyên
+  dù đã thu thập lại thành công. Xem log worker hoặc kết quả task để kiểm tra lần
+  thu thập; không đổi mốc hiệu lực sang thời gian hiện tại vì sẽ làm sai lịch sử
+  tính chi phí.
 - `started_at`/`ended_at` là thời điểm control-plane ghi nhận, có thể lệch với
   thời gian billing chính xác. Chưa áp dụng minimum billing/rounding riêng của
   từng provider; chưa gồm disk, mạng, IP, control-plane EC2, RDS, S3, thuế,

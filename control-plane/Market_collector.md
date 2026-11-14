@@ -21,6 +21,15 @@ docker compose ps
 
 **Cần thấy `worker` và `beat` ở trạng thái Up.** Nếu `grep -x beat` không có kết quả, hoặc `no such service: beat`, phiên bản code trên EC2 chưa chứa bản scheduler mới. Hãy cập nhật đúng branch đã commit/push các thay đổi `compose.yaml`, `app/celery_app.py`, `app/tasks.py`, `app/services/market_data_collector.py`, rồi chạy lại. **Không tự thêm Beat vào một bản code chưa có task và lịch chạy.**
 
+Sau khi cập nhật code, cần rebuild/recreate container; kiểm tra phiên bản đang
+chạy trong worker bằng lệnh sau. Worker phải import được collector GCP từ module
+chung và có lịch GCP On-demand. Nếu lỗi import hoặc thiếu key lịch, container
+vẫn đang dùng code cũ:
+
+```bash
+docker compose exec worker python -c "from app.services.on_demand_pricing import collect_gcp_on_demand; from app.celery_app import celery_app; print(celery_app.conf.beat_schedule['gcp-on-demand-prices-daily'])"
+```
+
 ## 2. Kiểm tra giới hạn và cloud credentials
 
 ```bash
@@ -100,6 +109,11 @@ sau khi lọc các loại máy khác. Kết quả có `prices_received`, `prices
 `spot_prices` bằng `price_type=ON_DEMAND`, không cần migration.
 Xem [cách tính giá và giới hạn lịch sử](DASHBOARD.md).
 
+AWS On-demand lọc `marketoption=OnDemand` và `operation=RunInstances`, bỏ giá
+bằng 0. Nếu loại máy như `p5en.48xlarge` còn nhiều mức giá khác nhau tại thời
+điểm hiệu lực mới nhất, collector ghi warning và bỏ riêng loại đó, vẫn lưu các
+loại máy hợp lệ. `status=partial` và `prices_missing` báo phần còn thiếu.
+
 `status: ok` nghĩa là lượt thu thập hoàn thành; `status: skipped` thường do khóa ngăn tác vụ cùng loại chạy trùng; `status: empty` là không có việc/dữ liệu để xử lý. Nếu gặp `No GCP/AWS machine types found`, đồng bộ Catalog tương ứng ở bước 3.
 
 **Tránh chạy thử thủ công đúng lúc Beat đang chạy cùng một loại task.** Lệnh thử trực tiếp gọi hàm trong container, không gửi vào queue Celery; Redis lock vẫn được áp dụng nếu phiên bản task có cơ chế này.
@@ -115,9 +129,9 @@ from app.database import SessionLocal
 
 queries = {
     "Catalog": "SELECT provider, COUNT(*) FROM machine_types GROUP BY provider ORDER BY provider",
-    "Prices": """SELECT mt.provider, COUNT(*), MAX(sp.recorded_at)
+    "Prices (effective time)": """SELECT mt.provider, sp.price_type, COUNT(*), MAX(sp.recorded_at)
         FROM spot_prices sp JOIN machine_types mt ON mt.id = sp.machine_type_id
-        GROUP BY mt.provider ORDER BY mt.provider""",
+        GROUP BY mt.provider, sp.price_type ORDER BY mt.provider, sp.price_type""",
     "Risks": """SELECT mt.provider, COUNT(*), MAX(sr.observed_at)
         FROM spot_risks sr JOIN machine_types mt ON mt.id = sr.machine_type_id
         GROUP BY mt.provider ORDER BY mt.provider""",
