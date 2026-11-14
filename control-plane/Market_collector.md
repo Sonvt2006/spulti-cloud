@@ -2,6 +2,9 @@
 
 ## 1. Cập nhật code và bật service
 
+Nếu đang nâng cấp DB cũ chưa có `valid_until`, làm phần **Nâng cấp DB cũ để lưu
+thời điểm giá hết hạn** bên dưới trước khi khởi động API/worker bằng code mới.
+
 ```bash
 cd ~/spulti-cloud/control-plane
 
@@ -29,6 +32,37 @@ vẫn đang dùng code cũ:
 ```bash
 docker compose exec worker python -c "from app.services.on_demand_pricing import collect_gcp_on_demand; from app.celery_app import celery_app; print(celery_app.conf.beat_schedule['gcp-on-demand-prices-daily'])"
 ```
+
+### Nâng cấp DB cũ để lưu thời điểm giá hết hạn
+
+Với DB đã có dữ liệu trước `valid_until`, chạy migration trước khi khởi động code
+mới. `create_all()` không thêm cột vào bảng đã tồn tại. Các service dùng chung
+image; migration và lệnh sửa lịch sử chạy trong container worker dùng credentials
+hiện có:
+
+```bash
+docker compose stop beat worker api
+docker compose build api
+docker compose run --rm --no-deps worker python -m app.scripts.add_price_validity
+docker compose up -d api
+
+# Xem trước khoảng hiệu lực Google có thể xác minh (không ghi DB):
+docker compose run --rm --no-deps worker python -m app.scripts.repair_gcp_price_history
+
+# Cập nhật các khoảng được xác minh, sau đó bật lại collector và scheduler:
+docker compose run --rm --no-deps worker python -m app.scripts.repair_gcp_price_history --apply
+docker compose up -d worker beat
+```
+
+Migration giữ nguyên ID/đơn giá, chỉ thêm `valid_until`; GCP Spot cũ chưa biết
+ngày hết hạn được đánh dấu khoảng rỗng để tạm ngừng dùng, không xóa. Lần sửa lịch
+sử khớp đúng loại máy/region/zone và mốc hiệu lực với Google. Có thể giới hạn bằng
+`--region asia-southeast1 --machine-type e2-standard-4`; không tự lấy zone `a`
+thay zone `b`. Không cần chạy lệnh repair theo lịch: collector bình thường đã
+lưu khoảng hiệu lực cho dữ liệu mới. `prices_updated` là số dòng cập nhật ngày
+hết hạn; `price_conflicts` và `quarantined_remaining` cho biết phần chưa xác minh.
+Nếu Google không còn trả một khoảng cũ, phần đó tiếp tục thiếu giá; không tự gán
+giá hiện tại cho quá khứ. Migration chạy lại không làm mất các khoảng đã xác minh.
 
 ## 2. Kiểm tra giới hạn và cloud credentials
 

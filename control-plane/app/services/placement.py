@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Literal
 
 from app.models import MachineType, MachineTypeOffering, SpotPrice, SpotRisk
+from app.services.cost_and_metering import price_is_active
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
@@ -157,6 +158,9 @@ def rank_candidates(
         prices.setdefault(
             (row.machine_type_id, row.region, row.zone, row.price_type), row
         )
+    # Filter after selecting the newest version of each scope; filtering in
+    # SQL first would let an older open-ended price replace an expired one.
+    prices = {key: row for key, row in prices.items() if price_is_active(row, now)}
     risks: dict[tuple[int, str, str | None], SpotRisk] = {}
     for row_risk in db.scalars(
         select(SpotRisk)

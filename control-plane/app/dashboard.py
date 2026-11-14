@@ -25,7 +25,7 @@ from app.models import (
     SpotPrice,
     User,
 )
-from app.services.cost_and_metering import Cost, estimate_costs
+from app.services.cost_and_metering import Cost, PriceBook, estimate_costs
 from app.services.instance_manager import (
     MachineRequest,
     ManagerError,
@@ -195,18 +195,21 @@ def _submission_result(db, machine):
         .order_by(InstanceAttempt.position)
     ).first()
     kind = db.get(MachineType, attempt.machine_type_id)
-    price = db.scalar(
-        select(SpotPrice.price_per_hour)
-        .where(
-            SpotPrice.machine_type_id == kind.id,
-            SpotPrice.region == attempt.region,
-            or_(SpotPrice.zone == attempt.zone, SpotPrice.zone.is_(None)),
-            SpotPrice.price_type == "SPOT",
-            SpotPrice.recorded_at <= attempt.created_at,
+    prices = list(
+        db.scalars(
+            select(SpotPrice).where(
+                SpotPrice.machine_type_id == kind.id,
+                SpotPrice.region == attempt.region,
+                or_(SpotPrice.zone == attempt.zone, SpotPrice.zone.is_(None)),
+                SpotPrice.price_type == "SPOT",
+                SpotPrice.recorded_at <= attempt.created_at,
+            )
         )
-        .order_by(SpotPrice.zone.is_(None), SpotPrice.recorded_at.desc())
-        .limit(1)
     )
+    rate = PriceBook(prices).rate_for(
+        kind.id, attempt.region, attempt.zone, "SPOT", attempt.created_at
+    )
+    price = rate.price_per_hour if rate is not None else None
     result = machine_response(db, machine)
     return {
         "job_id": result.job_id,

@@ -228,17 +228,22 @@ class GCPAdapter(CloudAdapter):
         include_risk: bool = True,
         include_price: bool = True,
     ):
-        if zone is not None and include_price:
-            raise ValueError("GCP: lấy giá theo Region, lấy rủi ro theo Zone")
-        """GCP advice.capacityHistory: USD/hour price + historical preemption."""
+        """Keep every price validity interval and the response's actual scope.
+
+        Past and future intervals are history, not a claim that a price is valid
+        now. Consumers apply the inclusive start and exclusive end timestamps.
+        """
         import logging
-        from datetime import datetime
-        from decimal import Decimal
+        from datetime import UTC, datetime
+        from decimal import Decimal, InvalidOperation
         from urllib.parse import quote
 
         import google.auth
         from app.adapters.base import MarketData, SpotPriceQuote, SpotRiskEstimate
         from google.auth.transport.requests import AuthorizedSession
+
+        if zone is not None and zone.rsplit("-", 1)[0] != region:
+            raise ValueError("GCP zone must belong to the requested region")
 
         credentials, _ = google.auth.default(
             scopes=["https://www.googleapis.com/auth/cloud-platform"]
@@ -253,7 +258,12 @@ class GCPAdapter(CloudAdapter):
         risks = []
 
         def timestamp(value):
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if not isinstance(value, str):
+                raise ValueError("GCP timestamps must be strings")
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                raise ValueError("GCP timestamps must include a timezone")
+            return parsed.astimezone(UTC)
 
         for name in machine_types:
             is_bare_metal = "-metal" in name
@@ -294,29 +304,78 @@ class GCPAdapter(CloudAdapter):
                 )
                 continue
 
-            if include_price and data.get("priceHistory"):
-                latest = max(
-                    data["priceHistory"],
-                    key=lambda row: row.get("interval", {}).get("startTime", ""),
+            # A response may be scoped to a zone even when requested through
+            # the regional endpoint. Never promote that quote to regional data.
+            response_zone = zone
+            location = data.get("location")
+            if location:
+                parts = location.rstrip("/").split("/")
+                scope, name_at_location = parts[-2:] if len(parts) >= 2 else ("", "")
+                if scope == "regions":
+                    response_region, response_zone = name_at_location, None
+                elif scope == "zones":
+                    response_zone = name_at_location
+                    response_region = response_zone.rsplit("-", 1)[0]
+                else:
+                    logging.warning(
+                        "Skip GCP history with invalid location: %s", location
+                    )
+                    continue
+                if response_region != region or (zone and response_zone != zone):
+                    logging.warning(
+                        "Skip mismatched GCP scope for %s: requested %s, got %s",
+                        name,
+                        zone or region,
+                        location,
+                    )
+                    continue
+            if data.get("machineType", name).rsplit("/", 1)[-1] != name:
+                logging.warning(
+                    "Skip GCP history for mismatched machine type: %s", name
                 )
-                money = latest.get("listPrice", {})
-                if money.get("currencyCode") == "USD" and latest.get(
-                    "interval", {}
-                ).get("startTime"):
+                continue
+
+            type_prices = []
+            for row in data.get("priceHistory", []) if include_price else []:
+                interval = row.get("interval", {})
+                money = row.get("listPrice", {})
+                if money.get("currencyCode") != "USD":
+                    continue
+                try:
+                    # An unknown beginning cannot safely be assigned to an
+                    # instance lifetime. A missing end explicitly means open.
+                    effective = timestamp(interval["startTime"])
+                    until = (
+                        timestamp(interval["endTime"])
+                        if interval.get("endTime")
+                        else None
+                    )
+                    if until is not None and until <= effective:
+                        raise ValueError(
+                            "GCP price interval must have positive duration"
+                        )
                     amount = Decimal(str(money.get("units", "0"))) + (
                         Decimal(str(money.get("nanos", 0))) / Decimal(10**9)
                     )
-                    if amount >= 0:
-                        prices.append(
-                            SpotPriceQuote(
-                                provider="GCP",
-                                machine_type=name,
-                                region=region,
-                                zone=zone,
-                                price_per_hour=amount,
-                                effective_at=timestamp(latest["interval"]["startTime"]),
-                            )
-                        )
+                    if not amount.is_finite() or amount < 0:
+                        raise ValueError("Invalid GCP price")
+                except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+                    logging.warning(
+                        "Skip invalid GCP price interval for %s: %s", name, exc
+                    )
+                    continue
+                type_prices.append(
+                    SpotPriceQuote(
+                        provider="GCP",
+                        machine_type=name,
+                        region=region,
+                        zone=response_zone,
+                        price_per_hour=amount,
+                        effective_at=effective,
+                        valid_until=until,
+                    )
+                )
+            prices.extend(sorted(type_prices, key=lambda item: item.effective_at))
 
             if include_risk and data.get("preemptionHistory"):
                 latest = max(
@@ -331,7 +390,7 @@ class GCPAdapter(CloudAdapter):
                             provider="GCP",
                             machine_type=name,
                             region=region,
-                            zone=zone,
+                            zone=response_zone,
                             source="GCP_CAPACITY_HISTORY",
                             metric="PREEMPTION_RATE_DAILY",
                             rate_min=rate,

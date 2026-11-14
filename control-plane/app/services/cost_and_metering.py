@@ -32,6 +32,14 @@ def seconds(start: datetime, end: datetime) -> Decimal:
     return Decimal((end - start) // timedelta(microseconds=1)) / 1_000_000
 
 
+def price_is_active(row: SpotPrice, at: datetime) -> bool:
+    """Price intervals include recorded_at and exclude valid_until."""
+    at = utc(at)
+    return utc(row.recorded_at) <= at and (
+        row.valid_until is None or at < utc(row.valid_until)
+    )
+
+
 @dataclass
 class Cost:
     runtime_seconds: Decimal = ZERO
@@ -92,10 +100,28 @@ class PriceBook:
         ]
 
     def rate(self, instance: Instance, kind: str, at: datetime) -> SpotPrice | None:
-        for key in self.scopes(instance, kind):
+        return self.rate_for(
+            instance.machine_type_id, instance.region, instance.zone, kind, at
+        )
+
+    def rate_for(
+        self,
+        machine_type_id: int,
+        region: str,
+        zone: str | None,
+        kind: str,
+        at: datetime,
+    ) -> SpotPrice | None:
+        at = utc(at)
+        for scope_zone in (zone, None):
+            key = (machine_type_id, region, scope_zone, kind)
             index = bisect_right(self.times[key], at) - 1
             if index >= 0:
-                return self.rows[key][index]
+                # Check expiry after choosing the latest version. An older,
+                # open-ended version must not reappear after its replacement.
+                row = self.rows[key][index]
+                if price_is_active(row, at):
+                    return row
         return None
 
     def boundaries(self, instance: Instance, start: datetime, end: datetime):
@@ -103,6 +129,12 @@ class PriceBook:
         for kind in ("SPOT", "ON_DEMAND"):
             for key in self.scopes(instance, kind):
                 points.update(at for at in self.times[key] if start < at < end)
+                points.update(
+                    utc(row.valid_until)
+                    for row in self.rows[key]
+                    if row.valid_until is not None
+                    and start < utc(row.valid_until) < end
+                )
         return sorted(points)
 
 
@@ -176,6 +208,9 @@ def estimate_costs(
             )
             rates[f"{label}_price_recorded_at"] = (
                 utc(rate.recorded_at) if rate else None
+            )
+            rates[f"{label}_price_valid_until"] = (
+                utc(rate.valid_until) if rate and rate.valid_until is not None else None
             )
             if instance.ended_at is None and utc(instance.started_at) <= now:
                 if rate is None:

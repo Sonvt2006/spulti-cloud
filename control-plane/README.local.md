@@ -11,6 +11,10 @@ Từ thư mục gốc repo, mở PowerShell hoặc Bash và chuyển vào `contr
 Giữ nguyên `.env.local` và các volume đã có; **không copy đè file env hoặc sinh
 lại JWT secret mỗi lần khởi động**.
 
+Nếu volume PostgreSQL được tạo trước khi có `spot_prices.valid_until`, làm bước
+migration ở mục 8.1 trước khi khởi động API/worker mới. `app.init_db` chỉ tạo bảng
+chưa có, không tự thêm cột vào bảng cũ.
+
 ```text
 cd control-plane
 docker version
@@ -518,6 +522,23 @@ Không dùng `app.seed` để chuẩn bị báo giá hoặc đăng nhập dashbo
 thật theo mục 8.3–8.4 bên dưới.
 
 ### 8.1. Kiểm tra cả hệ thống sau khi khởi động
+
+Nếu nâng cấp DB local cũ chưa có cột `spot_prices.valid_until`, chạy migration
+trước khi khởi động API/worker bằng code mới:
+
+```text
+docker compose --env-file .env.local -f compose.local.yaml stop beat worker api
+docker compose --env-file .env.local -f compose.local.yaml build api
+docker compose --env-file .env.local -f compose.local.yaml run --rm --no-deps worker python -m app.scripts.add_price_validity
+docker compose --env-file .env.local -f compose.local.yaml run --rm --no-deps worker python -m app.scripts.repair_gcp_price_history
+docker compose --env-file .env.local -f compose.local.yaml run --rm --no-deps worker python -m app.scripts.repair_gcp_price_history --apply
+docker compose --env-file .env.local -f compose.local.yaml up -d api worker beat
+```
+
+Lệnh repair mặc định chỉ xem trước; `--apply` mới cập nhật khoảng hiệu lực lấy từ
+Google. Giữ nguyên giá/ID; các khoảng GCP cũ chưa được xác minh sẽ tạm thiếu giá.
+Xem [chi tiết nâng cấp và sửa lịch sử](Market_collector.md). DB mới được tạo từ
+model hiện tại đã có cột này, không cần bước thêm cột.
 
 ```text
 docker compose --env-file .env.local -f compose.local.yaml ps

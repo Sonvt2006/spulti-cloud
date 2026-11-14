@@ -279,9 +279,15 @@ chi phí = tổng (số giây instance chạy trong khoảng × đơn giá/giờ
   UI dùng `known_spot_cost` / `known_on_demand_cost` để hiển thị số tiền tối thiểu
   đã tính được, kèm số giờ thiếu giá. Chênh lệch vẫn hiện `—`. Đây là lý do
   dữ liệu mới thu thập có thể chưa đủ để so sánh toàn bộ vòng đời máy cũ.
-- Giá hiện tại tiếp tục dùng bản ghi gần nhất có hiệu lực như placement hiện có;
-  chưa áp dụng thời hạn hết hiệu lực cho dữ liệu market. UI hiển thị thời điểm
-  giá để người dùng đánh giá độ mới. Collector phải được giám sát vận hành.
+- Giá chỉ áp dụng trong `[recorded_at, valid_until)`: bắt đầu bao gồm, kết thúc
+  không bao gồm. `valid_until=NULL` nghĩa là chưa có mốc kết thúc từ nguồn giá.
+  GCP Spot giữ toàn bộ `priceHistory`, gồm lịch sử đã hết hạn; `endTime` được lưu
+  nguyên nghĩa vào `valid_until`. Xem [Google capacityHistory](https://docs.cloud.google.com/compute/docs/reference/rest/beta/advice/capacityHistory).
+  Bộ tính chi phí tách khoảng tại cả lúc bắt đầu và hết hạn giá. Khoảng trống
+  được tính là thiếu dữ liệu; giá hiện tại trả `null`, tổng/tiết kiệm đầy đủ chưa
+  xác định. Placement không chọn giá hết hạn, không khôi phục bản ghi cũ cùng
+  scope hay lấy giá từ zone khác để bù. Giá region hợp lệ vẫn có thể áp dụng cho
+  các zone thuộc region đó. Khi có đủ dữ liệu hợp lệ, tiết kiệm âm vẫn được giữ.
 - **Giá Spot/On-demand có hiệu lực từ** là thời điểm nhà cung cấp bắt đầu áp dụng
   đơn giá, không phải lần collector chạy gần nhất. Với GCP Spot, thời điểm này
   lấy từ `priceHistory[].interval.startTime`. Nếu API tiếp tục trả cùng giá và
@@ -295,6 +301,24 @@ chi phí = tổng (số giây instance chạy trong khoảng × đơn giá/giờ
   credit, Savings Plans/commitments hoặc phí phần mềm.
 - Bảng `CostRecord` cũ không được cộng vào phép tính vì snapshot không có cửa sổ
   thời gian rõ ràng và có thể trùng lặp. Dashboard không ghi đè bảng này.
+
+### Nâng cấp lịch sử giá có sẵn
+
+DB hiện có cần chạy migration `python -m app.scripts.add_price_validity` trước
+khi khởi động API/worker bằng code mới. Migration PostgreSQL thêm `valid_until`
+và giữ nguyên mọi ID/đơn giá. Vì lịch sử GCP Spot cũ không lưu `endTime`, lần
+migration đầu đặt các khoảng cũ thành rỗng (`valid_until=recorded_at`) để không
+tiếp tục coi chúng có hiệu lực vô hạn. AWS và On-demand không bị thay đổi.
+Chạy lại migration không đóng các khoảng mở đã được Google xác minh.
+
+`python -m app.scripts.repair_gcp_price_history` đọc lại Google để xác minh các
+scope GCP Spot đang có trong DB. Mặc định chỉ xem trước, thêm `--apply` mới lưu.
+Lệnh chỉ khôi phục ngày hết hạn cho bản ghi cùng giá/loại máy/region/zone/mốc
+bắt đầu, và nhập những khoảng lịch sử Google trả thêm. Không tự sửa đơn giá,
+không xóa lịch sử, không lấy zone `a` thay cho `b`. Các khoảng không còn được
+API trả về hoặc bị xung đột giá vẫn tạm loại khỏi phép tính; `quarantined_remaining`
+cho biết số dòng đó. `prices_updated` đếm các dòng được cập nhật khoảng hiệu lực,
+kể cả bản ghi trùng. Xem [lệnh triển khai và sửa lịch sử](Market_collector.md).
 
 ## Quy tắc chọn máy và chống tạo trùng
 

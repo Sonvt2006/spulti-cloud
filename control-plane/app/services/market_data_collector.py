@@ -1,7 +1,8 @@
 """Market Data Collector: orchestrates adapters and persists their normalized data."""
 
 import logging
-from datetime import UTC
+from datetime import UTC, datetime
+from decimal import Decimal
 
 from app.adapters.aws import AWSAdapter
 from app.adapters.base import MarketData
@@ -12,6 +13,10 @@ from app.services.catalog import upsert_machine_types
 from sqlalchemy import func, select
 
 logger = logging.getLogger(__name__)
+
+
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _known_types(provider: str, limit_types: int | None = None) -> dict[str, int]:
@@ -36,6 +41,8 @@ def save_market_data(data: MarketData, *, dry_run: bool = False) -> dict[str, in
         "prices_received": len(data.prices),
         "risks_received": len(data.risks),
         "prices_saved": 0,
+        "prices_updated": 0,
+        "price_conflicts": 0,
         "risks_saved": 0,
         "unknown_types": 0,
     }
@@ -57,22 +64,26 @@ def save_market_data(data: MarketData, *, dry_run: bool = False) -> dict[str, in
         for item in data.prices:
             if item.price_type not in {"SPOT", "ON_DEMAND"}:
                 raise ValueError("Unsupported price type")
+            if item.valid_until is not None and _utc(item.valid_until) <= _utc(
+                item.effective_at
+            ):
+                raise ValueError("Price validity end must be after its start")
             mid = type_ids.get((item.provider, item.machine_type))
             if mid is None:
                 results["unknown_types"] += 1
                 continue
-            exists = db.scalar(
-                select(SpotPrice.id)
-                .where(
-                    SpotPrice.machine_type_id == mid,
-                    SpotPrice.region == item.region,
-                    SpotPrice.zone == item.zone,
-                    SpotPrice.price_type == item.price_type,
-                    SpotPrice.recorded_at == item.effective_at,
+            existing = list(
+                db.scalars(
+                    select(SpotPrice).where(
+                        SpotPrice.machine_type_id == mid,
+                        SpotPrice.region == item.region,
+                        SpotPrice.zone == item.zone,
+                        SpotPrice.price_type == item.price_type,
+                        SpotPrice.recorded_at == item.effective_at,
+                    )
                 )
-                .limit(1)
             )
-            if exists is None:
+            if not existing:
                 db.add(
                     SpotPrice(
                         machine_type_id=mid,
@@ -81,9 +92,32 @@ def save_market_data(data: MarketData, *, dry_run: bool = False) -> dict[str, in
                         price_type=item.price_type,
                         price_per_hour=item.price_per_hour,
                         recorded_at=item.effective_at,
+                        valid_until=item.valid_until,
                     )
                 )
                 results["prices_saved"] += 1
+            for exists in existing:
+                if abs(exists.price_per_hour - item.price_per_hour) > Decimal(
+                    ".0000005"
+                ):
+                    # Keep conflicts quarantined rather than repair validity
+                    # against a different price. Allow Numeric(12, 6) rounding.
+                    results["price_conflicts"] += 1
+                    logger.warning(
+                        "Conflicting stored price for %s/%s/%s/%s at %s",
+                        item.provider,
+                        item.machine_type,
+                        item.region,
+                        item.zone,
+                        item.effective_at,
+                    )
+                elif (
+                    _utc(exists.valid_until) if exists.valid_until is not None else None
+                ) != (_utc(item.valid_until) if item.valid_until is not None else None):
+                    # Update every duplicate with the same price, keeping IDs,
+                    # prices and starts; the latest row must not mask a repair.
+                    exists.valid_until = item.valid_until
+                    results["prices_updated"] += 1
 
         for item in data.risks:
             mid = type_ids.get((item.provider, item.machine_type))

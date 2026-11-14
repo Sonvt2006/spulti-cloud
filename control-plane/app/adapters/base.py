@@ -80,6 +80,8 @@ class SpotPriceQuote:
     price_per_hour: Decimal
     effective_at: datetime
     price_type: str = "SPOT"
+    # Inclusive effective_at; exclusive valid_until. None means no known end.
+    valid_until: datetime | None = None
 
 
 @dataclass(frozen=True)

@@ -315,6 +315,10 @@ class SpotPrice(Base):
             "price_type IN ('SPOT', 'ON_DEMAND')", name="spot_prices_price_type_check"
         ),
         CheckConstraint("price_per_hour >= 0", name="spot_prices_price_per_hour_check"),
+        CheckConstraint(
+            "valid_until IS NULL OR valid_until >= recorded_at",
+            name="spot_prices_valid_until_check",
+        ),
     )
 
     id: Mapped[int] = _id_pk()
@@ -328,6 +332,7 @@ class SpotPrice(Base):
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Event(Base):

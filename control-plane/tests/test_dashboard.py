@@ -19,6 +19,7 @@ from app.models import (  # noqa: E402
     Machine,
     MachineJob,
     MachineLifecycle,
+    MachineType,
     SpotPrice,
 )
 from app.services.cost_and_metering import estimate_costs  # noqa: E402
@@ -27,7 +28,10 @@ from app.services.instance_manager import (  # noqa: E402
     _prepare_attempts,
 )
 from app.services.market_data_collector import save_market_data  # noqa: E402
-from app.services.on_demand_pricing import aws_on_demand_prices  # noqa: E402
+from app.services.on_demand_pricing import (  # noqa: E402
+    aws_on_demand_prices,
+    collect_aws_on_demand,
+)
 from sqlalchemy import delete, select  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from test_instance_manager import PROFILES  # noqa: E402
@@ -408,6 +412,51 @@ class DashboardTests(unittest.TestCase):
             )
         self.assertEqual(len(list(self.db.scalars(select(SpotPrice)))), 2)
 
+    def test_aws_ambiguous_type_does_not_block_saving_other_prices(self):
+        self.db.execute(delete(SpotPrice))
+        self.db.add(
+            MachineType(
+                provider="AWS",
+                name="p5en.48xlarge",
+                vcpu=192,
+                ram_gib=Decimal(2048),
+                gpu_count=8,
+            )
+        )
+        self.db.commit()
+        client = MagicMock()
+        client.get_paginator.return_value.paginate.return_value = [
+            {
+                "PriceList": [
+                    OnDemandTests.product("p5en.48xlarge", "100"),
+                    OnDemandTests.product("m6i.xlarge", ".4"),
+                ]
+            },
+            {"PriceList": [OnDemandTests.product("p5en.48xlarge", "110")]},
+        ]
+        factory = sessionmaker(self.engine)
+        with (
+            patch("app.services.market_data_collector.SessionLocal", factory),
+            patch("app.services.on_demand_pricing.boto3.client", return_value=client),
+        ):
+            result = collect_aws_on_demand(["ap-southeast-1"])
+            repeated = collect_aws_on_demand(["ap-southeast-1"])
+        self.assertEqual(
+            result,
+            {
+                "status": "partial",
+                "prices_received": 1,
+                "prices_saved": 1,
+                "prices_missing": 1,
+            },
+        )
+        self.assertEqual(repeated["prices_saved"], 0)
+        rows = list(self.db.scalars(select(SpotPrice)))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].machine_type_id, 1)
+        self.assertEqual(rows[0].price_type, "ON_DEMAND")
+        self.assertEqual(rows[0].price_per_hour, Decimal(".4"))
+
 
 class OnDemandTests(unittest.TestCase):
     @staticmethod
@@ -464,19 +513,118 @@ class OnDemandTests(unittest.TestCase):
         self.assertEqual(filters["regionCode"], "ap-southeast-1")
         self.assertEqual(filters["operatingSystem"], "Linux")
         self.assertEqual(filters["tenancy"], "Shared")
+        self.assertEqual(filters["marketoption"], "OnDemand")
+        self.assertEqual(filters["operation"], "RunInstances")
 
-    def test_ambiguous_prices_fail_instead_of_picking_silently(self):
+    def test_ambiguous_latest_prices_skip_only_that_type_across_pages(self):
         client = MagicMock()
         client.get_paginator.return_value.paginate.return_value = [
             {
                 "PriceList": [
+                    self.product("p5en.48xlarge", "100"),
                     self.product("m6i.xlarge", ".4"),
-                    self.product("m6i.xlarge", ".5"),
+                ]
+            },
+            {
+                "PriceList": [
+                    self.product("p5en.48xlarge", "110"),
+                    self.product("p5en.48xlarge", "100"),
+                ]
+            },
+        ]
+        with self.assertLogs("app.services.on_demand_pricing", level="WARNING") as logs:
+            quotes = aws_on_demand_prices(
+                client, "ap-southeast-1", {"m6i.xlarge", "p5en.48xlarge"}
+            )
+        self.assertEqual([q.machine_type for q in quotes], ["m6i.xlarge"])
+        self.assertEqual(quotes[0].price_per_hour, Decimal(".4"))
+        self.assertIn("p5en.48xlarge", logs.output[0])
+
+    def test_old_price_conflicts_do_not_hide_newer_unique_price_in_any_order(self):
+        products = [
+            self.product("p5en.48xlarge", "100"),
+            self.product("p5en.48xlarge", "110"),
+            self.product("p5en.48xlarge", "120", "2026-02-01T00:00:00Z"),
+        ]
+        for order in (
+            products,
+            products[::-1],
+            [products[0], products[2], products[1]],
+        ):
+            with self.subTest(order=order):
+                client = MagicMock()
+                client.get_paginator.return_value.paginate.return_value = [
+                    {"PriceList": [p]} for p in order
+                ]
+                quotes = aws_on_demand_prices(
+                    client,
+                    "ap-southeast-1",
+                    {"p5en.48xlarge"},
+                    now=datetime(2026, 3, 1, tzinfo=UTC),
+                )
+                self.assertEqual(len(quotes), 1)
+                self.assertEqual(quotes[0].price_per_hour, Decimal(120))
+                self.assertEqual(
+                    quotes[0].effective_at, datetime(2026, 2, 1, tzinfo=UTC)
+                )
+
+    def test_latest_conflict_does_not_fall_back_to_older_price(self):
+        client = MagicMock()
+        products = [
+            self.product("p5en.48xlarge", "100"),
+            self.product("p5en.48xlarge", "110", "2026-02-01T00:00:00Z"),
+            self.product("p5en.48xlarge", "120", "2026-02-01T00:00:00Z"),
+        ]
+        for order in (products, products[::-1]):
+            with self.subTest(order=order):
+                client.get_paginator.return_value.paginate.return_value = [
+                    {"PriceList": order}
+                ]
+                self.assertEqual(
+                    aws_on_demand_prices(client, "ap-southeast-1", {"p5en.48xlarge"}),
+                    [],
+                )
+
+    def test_duplicate_identical_prices_keep_one_quote(self):
+        client = MagicMock()
+        client.get_paginator.return_value.paginate.return_value = [
+            {"PriceList": [self.product("m6i.xlarge", ".4")]},
+            {"PriceList": [self.product("m6i.xlarge", ".4")]},
+        ]
+        quotes = aws_on_demand_prices(client, "ap-southeast-1", {"m6i.xlarge"})
+        self.assertEqual(len(quotes), 1)
+        self.assertEqual(quotes[0].price_per_hour, Decimal(".4"))
+
+    def test_zero_hourly_fee_is_not_a_free_on_demand_compute_price(self):
+        client = MagicMock()
+        client.get_paginator.return_value.paginate.return_value = [
+            {
+                "PriceList": [
+                    self.product("p5en.48xlarge", "0"),
+                    self.product("m6i.xlarge", ".4"),
                 ]
             }
         ]
-        with self.assertRaisesRegex(ValueError, "Ambiguous"):
-            aws_on_demand_prices(client, "ap-southeast-1", {"m6i.xlarge"})
+        quotes = aws_on_demand_prices(
+            client, "ap-southeast-1", {"p5en.48xlarge", "m6i.xlarge"}
+        )
+        self.assertEqual([q.machine_type for q in quotes], ["m6i.xlarge"])
+
+    def test_latest_zero_price_does_not_restore_an_older_positive_rate(self):
+        products = [
+            self.product("p5en.48xlarge", "100"),
+            self.product("p5en.48xlarge", "0", "2026-02-01T00:00:00Z"),
+        ]
+        for order in (products, products[::-1]):
+            with self.subTest(order=order):
+                client = MagicMock()
+                client.get_paginator.return_value.paginate.return_value = [
+                    {"PriceList": [p]} for p in order
+                ]
+                self.assertEqual(
+                    aws_on_demand_prices(client, "ap-southeast-1", {"p5en.48xlarge"}),
+                    [],
+                )
 
 
 if __name__ == "__main__":
