@@ -83,6 +83,23 @@ docker compose exec worker python -c "from app.tasks import collect_market_data;
 docker compose exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data('GCP', 'risks'))"
 ```
 
+**Thu thập giá On-demand:**
+
+```bash
+docker compose exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data('AWS', 'on_demand'))"
+docker compose exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data('GCP', 'on_demand'))"
+```
+
+GCP On-demand dùng Cloud Billing Catalog API và credentials GCP sẵn có; bật
+`cloudbilling.googleapis.com` trong project cấp credentials. Hỗ trợ E2 predefined,
+gồm `e2-micro/small/medium`, standard, highcpu và highmem. Region được suy ra từ
+`MARKET_GCP_ZONES`; đặt `asia-southeast1-b,asia-northeast1-a` nếu cần Singapore
+và Tokyo, rồi recreate worker. `MARKET_LIMIT_TYPES` giới hạn các E2 được hỗ trợ
+sau khi lọc các loại máy khác. Kết quả có `prices_received`, `prices_saved` và
+`prices_missing`; `partial` báo thiếu giá ở một phần region. Collector lưu vào
+`spot_prices` bằng `price_type=ON_DEMAND`, không cần migration.
+Xem [cách tính giá và giới hạn lịch sử](DASHBOARD.md).
+
 `status: ok` nghĩa là lượt thu thập hoàn thành; `status: skipped` thường do khóa ngăn tác vụ cùng loại chạy trùng; `status: empty` là không có việc/dữ liệu để xử lý. Nếu gặp `No GCP/AWS machine types found`, đồng bộ Catalog tương ứng ở bước 3.
 
 **Tránh chạy thử thủ công đúng lúc Beat đang chạy cùng một loại task.** Lệnh thử trực tiếp gọi hàm trong container, không gửi vào queue Celery; Redis lock vẫn được áp dụng nếu phiên bản task có cơ chế này.
@@ -131,6 +148,8 @@ Khi code hiện tại đặt Celery timezone là `UTC`, lịch theo **giờ Vi�
 | GCP Spot Prices | Phút **05, 20, 35, 50** mỗi giờ |
 | AWS Spot Risks | **07:20** mỗi ngày |
 | GCP Spot Risks | **07:35** mỗi ngày |
+| AWS On-demand Prices | **07:50** mỗi ngày |
+| GCP On-demand Prices | **08:05** mỗi ngày |
 
 Đây là **giờ gửi task**, không phải giờ hoàn thành. Beat gửi công việc vào Redis, Worker gọi AWS/GCP APIs và lưu dữ liệu vào RDS. **Không cần bật máy Spot** để thu thập thị trường.
 

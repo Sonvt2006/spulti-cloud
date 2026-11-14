@@ -54,7 +54,7 @@ def _csv_env(name: str, default: str) -> list[str]:
 
 @celery_app.task(name="spulti.market.collect", time_limit=10800)
 def collect_market_data(provider: str, dataset: str) -> dict:
-    """Collect either prices (hourly) or risks (daily), with an overlap guard."""
+    """Collect Spot prices, risks or On-demand prices, with an overlap guard."""
     provider = provider.upper()
     dataset = dataset.lower()
     if provider not in {"AWS", "GCP"} or dataset not in {
@@ -63,9 +63,6 @@ def collect_market_data(provider: str, dataset: str) -> dict:
         "on_demand",
     }:
         raise ValueError(f"Invalid market collection request: {provider}/{dataset}")
-    if dataset == "on_demand" and provider != "AWS":
-        raise ValueError("Automatic on-demand collection currently supports AWS")
-
     from app.services.market_data_collector import collect_aws, collect_gcp
 
     lock_key = f"spulti:market:lock:{provider.lower()}:{dataset}"
@@ -79,7 +76,7 @@ def collect_market_data(provider: str, dataset: str) -> dict:
             return {"status": "skipped", "provider": provider, "dataset": dataset}
         try:
             limit = _market_limit()
-            if dataset == "on_demand":
+            if dataset == "on_demand" and provider == "AWS":
                 from app.services.on_demand_pricing import collect_aws_on_demand
 
                 regions = _csv_env("MARKET_AWS_REGIONS", "us-east-1")
@@ -107,6 +104,14 @@ def collect_market_data(provider: str, dataset: str) -> dict:
                     raise ValueError("GCP project and zones must be specified")
 
                 region_zones = [(zone.rsplit("-", 1)[0], zone) for zone in zones]
+
+                if dataset == "on_demand":
+                    from app.services.on_demand_pricing import (
+                        collect_gcp_on_demand,
+                    )
+
+                    regions = sorted({region for region, _ in region_zones})
+                    return collect_gcp_on_demand(regions, limit)
 
                 if dataset == "prices":
                     locations = sorted({(region, None) for region, _ in region_zones})

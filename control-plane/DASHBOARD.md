@@ -197,10 +197,36 @@ Lệnh trả về task ID; xem log worker để xác nhận `prices_received`/`p
 và lỗi credentials/network. Lỗi hoặc giá thiếu không được thay bằng tỷ lệ giảm
 giá cố định. Chạy duy nhất một beat theo cấu hình hiện có.
 
-**GCP:** collector hiện có chỉ lấy giá Spot. Dashboard so sánh On-demand GCP khi
-database đã có bản ghi `price_type=ON_DEMAND` hợp lệ; chưa có collector tự động
-cho giá GCP On-demand trong thay đổi này. Khi thiếu, UI hiển thị `—` và số giờ
-thiếu dữ liệu. Không sử dụng giá AWS để bù cho GCP.
+**GCP:** worker dùng [Cloud Billing Catalog API](https://docs.cloud.google.com/billing/docs/reference/rest/v1/services.skus/list)
+để thu thập giá Compute Engine On-demand bằng USD. Collector hỗ trợ E2 predefined
+(`e2-micro/small/medium`, `e2-standard-*`, `e2-highcpu-*`, `e2-highmem-*`),
+lấy đúng `serviceRegions` rồi cộng giá CPU và RAM theo cấu hình trong catalog.
+E2 shared-core dùng lần lượt **0.25 / 0.5 / 1 vCPU tính phí**, thay vì 2 vCPU
+hiển thị trong guest. Custom types, GPU, các dòng máy khác, giá Spot, commitment,
+license và free-tier discount không được dùng làm giá so sánh.
+
+Worker dùng GCP Application Default Credentials đã cấu hình, không cần API key
+mới hay thay đổi schema. Bật **Cloud Billing API (`cloudbilling.googleapis.com`)**
+trong project cấp credentials; credentials cần OAuth scope `cloud-platform`
+(collector yêu cầu scope này). API được đọc có phân trang một lần cho các region.
+`MARKET_GCP_ZONES` xác định các region cần thu thập, ví dụ
+`asia-southeast1-b,asia-northeast1-a` cho Singapore và Tokyo.
+`MARKET_LIMIT_TYPES` giới hạn các E2 được hỗ trợ, sau khi lọc các loại máy khác.
+
+Celery Beat gửi task lúc **01:05 UTC / 08:05 giờ Việt Nam mỗi ngày**. Có thể
+gửi ngay sau khi triển khai:
+
+```bash
+docker compose exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data.delay('GCP', 'on_demand').id)"
+```
+
+Giá lưu trong `spot_prices` với `price_type=ON_DEMAND`, zone rỗng và thời điểm
+hiệu lực là thời điểm muộn hơn của hai giá CPU/RAM. Catalog mặc định chỉ trả
+giá mới nhất, có thể được ghi nhận trong 12 giờ vừa qua; collector **không tự
+gán giá hiện tại cho thời gian chạy cũ**. Dashboard có thể hiện đơn giá hiện tại
+nhưng tổng lịch sử vẫn thiếu dữ liệu. `status=partial` và `prices_missing` báo
+thiếu giá ở một phần các region; `empty` nghĩa là chưa nhận được giá hoặc chưa có
+E2 trong catalog. Khi thiếu, UI tiếp tục hiển thị `—` và số giờ thiếu giá.
 
 ## Ý nghĩa con số chi phí
 

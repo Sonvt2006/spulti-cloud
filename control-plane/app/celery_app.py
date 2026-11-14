@@ -35,6 +35,11 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(minute=50, hour=0),
         "args": ("AWS", "on_demand"),
     },
+    "gcp-on-demand-prices-daily": {
+        "task": "spulti.market.collect",
+        "schedule": crontab(minute=5, hour=1),
+        "args": ("GCP", "on_demand"),
+    },
     "reconcile-machines": {
         "task": "spulti.reconcile_machines",
         "schedule": 15.0,

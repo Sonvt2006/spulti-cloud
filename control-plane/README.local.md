@@ -596,6 +596,7 @@ Nếu dùng GCP:
 ```text
 docker compose --env-file .env.local -f compose.local.yaml exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data.delay('GCP', 'prices').id)"
 docker compose --env-file .env.local -f compose.local.yaml exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data.delay('GCP', 'risks').id)"
+docker compose --env-file .env.local -f compose.local.yaml exec worker python -c "from app.tasks import collect_market_data; print(collect_market_data.delay('GCP', 'on_demand').id)"
 ```
 
 Lệnh trả task ID, không có nghĩa đã thu thập xong. Xem `logs --tail=100 worker`
@@ -607,9 +608,12 @@ Collector AWS On-demand cần `pricing:GetProducts`; collector Spot/catalog cầ
 các quyền EC2 đọc tương ứng; GCP cần quyền đọc catalog và capacity history mà
 adapter sử dụng. Tài khoản có credentials nhưng thiếu quyền vẫn không lấy được
 giá. Beat duy trì giá Spot mỗi 15 phút; risk cập nhật hằng ngày; AWS On-demand
-lúc 00:50 UTC. Chỉ chạy một beat cho stack.
+lúc 00:50 UTC; GCP On-demand lúc 01:05 UTC. Chỉ chạy một beat cho stack.
 
-GCP chưa có collector On-demand tự động. Giá thiếu hiển thị `—`, không coi là 0.
+GCP On-demand hỗ trợ E2 predefined, gồm shared-core, ở các region suy ra từ
+`MARKET_GCP_ZONES`. Bật Cloud Billing API (`cloudbilling.googleapis.com`) cho
+project cấp credentials. Xem [chi tiết collector GCP](DASHBOARD.md).
+Giá thiếu hiển thị `—`, không coi là 0.
 Chi phí lịch sử là ước tính compute từ lúc instance được control-plane ghi nhận,
 không gồm disk/mạng/S3/RDS/control-plane hoặc hóa đơn cloud thực tế. Nếu chỉ mới
 thu thập giá, khoảng lịch sử cũ có thể chưa đủ giá để tính tổng.
