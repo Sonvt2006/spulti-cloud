@@ -108,6 +108,10 @@ def installation_script(provider: str, user_script: str = "") -> str:
         ":-gcp}",
         f":-{provider.lower()}}}",
     )
+    installer = installer.replace(
+        'exec /usr/bin/python3 /opt/spulti-agent/agent.py "$@"',
+        'exec /opt/spulti-runtime/bin/python /opt/spulti-agent/agent.py "$@"',
+    )
 
     # Keep the optional job runner separate from the always-on node monitor.
     installer = installer.replace("spulti-node-agent", "spulti-job-agent")
@@ -122,7 +126,8 @@ def installation_script(provider: str, user_script: str = "") -> str:
     installer = (
         installer[:start]
         + (
-            "ExecStart=/usr/bin/python3 "
+            'ExecStartPre=/opt/spulti-runtime/bin/python -c "import torch"\n'
+            "ExecStart=/opt/spulti-runtime/bin/python "
             "/opt/spulti-agent/agent.py managed "
             "--state-dir /var/lib/spulti-agent\n"
             "Restart=on-failure\n"
@@ -174,6 +179,11 @@ chmod 0644 /etc/systemd/system/spulti-node-agent.service
 systemctl daemon-reload
 systemctl enable --now spulti-node-agent.service
 echo "BOOTSTRAP: node monitor started"
+if [ ! -f /opt/spulti-agent/install_runtime.py ]; then
+    echo "BOOTSTRAP: release lacks install_runtime.py; publish an updated agent" >&2
+    exit 1
+fi
+python3 /opt/spulti-agent/install_runtime.py
 """.replace("__CLOUD__", provider.lower())
 
     return (
