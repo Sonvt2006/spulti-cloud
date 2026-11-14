@@ -80,9 +80,11 @@ state/files/torch-demo/torch/epoch-00000020.pt
 1. Đóng gói và phát hành agent mới bằng `package_agent.py`; gói phải có
    `spulti_torch.py` và `local_run.py`. Cập nhật URL/SHA-256 release của control
    plane theo quy trình triển khai hiện có.
-2. Cài PyTorch vào đúng Python interpreter mà job service sử dụng
-   (`/usr/bin/python3`) qua image hoặc startup script **trước khi job bắt đầu**.
-   Cấu hình này cần được giữ cho VM thay thế. Control plane không cần PyTorch.
+2. Cập nhật code control plane và rebuild API/worker/beat để dùng bootstrap mới.
+   Bootstrap tự tạo venv `/opt/spulti-runtime`, cài `torch==2.10.0+cpu` từ
+   [kho wheel CPU chính thức](https://download.pytorch.org/whl/cpu/torch/), rồi
+   kiểm tra import/tensor bằng tài khoản `spulti-agent`. Job service và lệnh
+   `spulti-agent` dùng Python của venv này. Control plane không cần cài PyTorch.
 3. Upload `examples/torch_regression.py` trên dashboard, đặt `total_steps` bằng
    số epoch, `step_delay=0`. Managed job Python mới tự bật file checkpoint.
 4. Hoặc submit qua SSH, với thư mục checkpoint có quyền ghi:
@@ -95,6 +97,31 @@ state/files/torch-demo/torch/epoch-00000020.pt
 Managed recovery tải code và snapshot S3 lên VM mới, khôi phục JSON state và
 chạy lại file cho epoch tiếp theo. Submit SSH độc lập cần gọi `resume` thủ công.
 Job managed hoàn thành vẫn tự xóa VM; bản cuối nằm trên S3 qua checkpoint API.
+
+### Tự cài thư viện trên VM
+
+Áp dụng cho VM Ubuntu 22.04/24.04 do Instance Manager tạo trên AWS/GCP, kể cả VM
+thay thế khi recovery. Monitor khởi động trước khi cài PyTorch để tiếp tục gửi
+heartbeat. Sau khi cài xong mới chạy startup script tùy chỉnh và khởi động job.
+Nếu đã có đúng phiên bản và service account import được thì bỏ qua tải lại.
+Lỗi tải/cài/import làm bootstrap dừng; job không được chạy khi thiếu thư viện.
+
+Đây là bản CPU, chưa cài CUDA, torchvision hoặc torchaudio. Cần cài thư viện
+riêng của workload thì dùng trong startup script:
+
+```bash
+/opt/spulti-runtime/bin/python -m pip install TEN_THU_VIEN
+```
+
+VM cần mạng ra kho package Ubuntu và `download.pytorch.org`/host tải wheel.
+Log nằm trong `/var/log/cloud-init-output.log` (AWS) hoặc log startup script
+(GCP), có tiền tố `BOOTSTRAP: PyTorch`. Trên mạng chậm có thể cần tăng
+`SPULTI_AGENT_BOOT_GRACE_SECONDS` ở control plane (mặc định 600 giây).
+
+Thay đổi này cần **cả release agent mới có `install_runtime.py` và code bootstrap
+mới trên control plane**. Chỉ upload archive agent sẽ chưa bật tự cài PyTorch.
+VM đang chạy không tự cập nhật; có thể dùng quy trình repair hiện có. Các script
+bootstrap standalone cũ bên ngoài Instance Manager chưa gọi installer mới.
 
 ## Phạm vi hỗ trợ
 

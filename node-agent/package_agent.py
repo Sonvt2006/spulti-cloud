@@ -21,6 +21,7 @@ RUNTIME_FILES = (
     "file_checkpoint.py",
     "heartbeat.py",
     "interruption.py",
+    "install_runtime.py",
     "job_runner.py",
     "local_run.py",
     "managed.py",
